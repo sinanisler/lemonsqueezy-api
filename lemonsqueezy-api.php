@@ -2014,7 +2014,7 @@ class LemonSqueezy_API_WordPress {
             <div class="snn-lemonsqueezy-section">
                 <h2><?php _e('Search & Filter', 'snn'); ?></h2>
                 <form method="get" action="">
-                    <input type="hidden" name="page" value="gumroad-api-users" />
+                    <input type="hidden" name="page" value="lemonsqueezy-api-users" />
                     
                     <div class="snn-lemonsqueezy-search-filters">
                         <div>
