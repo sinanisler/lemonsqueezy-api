@@ -741,8 +741,10 @@ class LemonSqueezy_API_WordPress {
         // Remove dots, underscores, and numbers to clean it up
         $clean_name = str_replace(array('.', '_', '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), ' ', $local_part);
 
-        // Capitalize first letter of each word
-        $first_name = ucwords(trim($clean_name));
+        // Get only the first part/word
+        $first_name = trim($clean_name);
+        $words = explode(' ', $first_name);
+        $first_name = !empty($words[0]) ? ucfirst(strtolower($words[0])) : '';
 
         // If empty after cleaning, use the original local part
         if (empty($first_name)) {
