@@ -18,10 +18,10 @@ if (!defined('ABSPATH')) {
 // Include GitHub auto-update functionality
 require_once plugin_dir_path(__FILE__) . 'github-update.php';
 
-class Gumroad_API_WordPress {
-    
-    private $option_name = 'gumroad_api_settings';
-    private $log_option_name = 'gumroad_api_logs';
+class LemonSqueezy_API_WordPress {
+
+    private $option_name = 'lemonsqueezy_api_settings';
+    private $log_option_name = 'lemonsqueezy_api_logs';
     
     public function __construct() {
         // Admin menu
@@ -29,18 +29,18 @@ class Gumroad_API_WordPress {
         add_action('admin_init', array($this, 'register_settings'));
         
         // Cron job for API-based sales fetching
-        add_action('gumroad_api_check_sales', array($this, 'check_recent_sales'));
+        add_action('lemonsqueezy_api_check_sales', array($this, 'check_recent_sales'));
         add_filter('cron_schedules', array($this, 'add_custom_cron_interval'));
-        
+
         // Activation/Deactivation
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
-        
+
         // AJAX handlers
-        add_action('wp_ajax_gumroad_test_api', array($this, 'test_api_connection'));
-        add_action('wp_ajax_gumroad_clear_logs', array($this, 'clear_logs'));
-        add_action('wp_ajax_gumroad_fetch_products', array($this, 'fetch_products'));
-        add_action('wp_ajax_gumroad_uninstall_plugin', array($this, 'uninstall_plugin_data'));
+        add_action('wp_ajax_lemonsqueezy_test_api', array($this, 'test_api_connection'));
+        add_action('wp_ajax_lemonsqueezy_clear_logs', array($this, 'clear_logs'));
+        add_action('wp_ajax_lemonsqueezy_fetch_products', array($this, 'fetch_products'));
+        add_action('wp_ajax_lemonsqueezy_uninstall_plugin', array($this, 'uninstall_plugin_data'));
         
         // Add admin styles
         add_action('admin_head', array($this, 'admin_styles'));
@@ -57,74 +57,74 @@ class Gumroad_API_WordPress {
      */
     public function admin_styles() {
         $screen = get_current_screen();
-        if (strpos($screen->id, 'gumroad-api') === false) {
+        if (strpos($screen->id, 'lemonsqueezy-api') === false) {
             return;
         }
         ?>
 <style>
-.snn-gumroad-stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 20px; margin-bottom: 30px; }
-.snn-gumroad-stat-card { background: #fff; color: #333; padding: 25px; border-radius: 8px; border: 1px solid #ddd; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-.snn-gumroad-stat-card-header { font-size: 14px; margin-bottom: 10px; color: #666; }
-.snn-gumroad-stat-card-value { font-size: 22px; font-weight: bold; color: #000; }
-.snn-gumroad-stat-card-footer { font-size: 12px; margin-top: 10px; color: #666; }
-.snn-gumroad-section { padding: 20px; background: white; border: 1px solid #ccd0d4; margin-bottom: 20px; border-radius: 4px; }
-.snn-gumroad-section h2 { margin-top: 0; padding-bottom: 10px; border-bottom: 2px solid #000; }
-.snn-gumroad-recent-logs-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-.snn-gumroad-recent-logs-header h2 { margin: 0; border-bottom: none; }
-.snn-gumroad-products-notice { background: #f9f9f9; border-left: 4px solid #000; padding: 15px; margin: 20px 0; }
-.snn-gumroad-products-loading { display: none; text-align: center; padding: 20px; }
-.snn-gumroad-products-list { display: none; }
-.snn-gumroad-products-list table { margin-top: 20px; }
-.snn-gumroad-products-list th { padding: 10px; background: #f5f5f5; font-weight: 600; }
-.snn-gumroad-products-list td { padding: 10px; vertical-align: top; }
-.snn-gumroad-product-roles-checkboxes { }
-.snn-gumroad-product-roles-checkboxes label { display: block; margin: 3px 0; font-weight: normal; }
-.snn-gumroad-api-info { background: #f0f8ff; padding: 15px; border-left: 4px solid #000; }
-.snn-gumroad-email-tags { margin-top: 15px; padding: 15px; background: #f0f0f1; border-left: 4px solid #000; }
-.snn-gumroad-email-tags h4 { margin-top: 0; }
-.snn-gumroad-email-tags ul { margin: 10px 0; padding-left: 20px; }
-.snn-gumroad-search-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 15px; }
-.snn-gumroad-search-filters input { width: 100%; }
-.snn-gumroad-search-actions { display: flex; gap: 10px; }
-.snn-gumroad-search-total { margin-left: auto; align-self: center; color: #666; }
-.snn-gumroad-log-entry { background: white; padding: 15px; margin-bottom: 10px; border: 1px solid #ccd0d4; border-radius: 4px; }
-.snn-gumroad-log-header { cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
-.snn-gumroad-log-timestamp { margin-left: 15px; color: #666; font-size: 12px; }
-.snn-gumroad-log-details { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; }
-.snn-gumroad-log-details pre { background: #f5f5f5; padding: 10px; overflow-x: auto; font-size: 12px; }
-.snn-gumroad-user-entry { background: white; padding: 15px; margin-bottom: 10px; border: 1px solid #ccd0d4; border-radius: 4px; }
-.snn-gumroad-user-entry:hover { box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: box-shadow 0.2s; }
-.snn-gumroad-user-header { cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 15px; }
-.snn-gumroad-user-header:hover { background: #f9f9f9; }
-.snn-gumroad-user-main-info { flex: 1; display: flex; align-items: center; gap: 15px; }
-.snn-gumroad-user-meta-info { display: flex; gap: 15px; align-items: center; font-size: 12px; color: #666; }
-.snn-gumroad-user-details { display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee; }
-.snn-gumroad-user-details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-.snn-gumroad-user-actions { margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee; display: flex; gap: 10px; }
-.snn-gumroad-user-details h3 { margin-top: 0; font-size: 14px; color: #000; }
-.snn-gumroad-user-details table { font-size: 13px; }
-.snn-gumroad-user-details th { width: 40%; padding: 8px; background: #f9f9f9; }
-.snn-gumroad-user-details td { padding: 8px; }
-.snn-gumroad-purchase-history { max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; }
-.snn-gumroad-purchase-history table { font-size: 12px; }
-.snn-gumroad-purchase-history th { padding: 6px; background: #f5f5f5; }
-.snn-gumroad-purchase-history td { padding: 6px; }
-.snn-gumroad-raw-data { background: #f5f5f5; padding: 10px; border-radius: 4px; max-height: 300px; overflow-y: auto; }
-.snn-gumroad-raw-data pre { margin: 0; font-size: 11px; white-space: pre-wrap; word-wrap: break-word; }
-.snn-gumroad-pagination { padding: 15px; background: white; border: 1px solid #ccd0d4; border-radius: 4px; margin-top: 10px; }
-.snn-gumroad-pagination .tablenav-pages { text-align: center; }
-.snn-gumroad-pagination .page-numbers { padding: 5px 10px; margin: 0 2px; border: 1px solid #ccd0d4; background: white; text-decoration: none; display: inline-block; color: #000; }
-.snn-gumroad-pagination .page-numbers.current { background: #000; color: white; border-color: #000; }
-.snn-gumroad-pagination .page-numbers:hover:not(.current) { background: #f0f0f1; }
-.snn-gumroad-settings-form { display: flex; align-items: center; gap: 15px; }
-.snn-gumroad-no-results { background: white; padding: 20px; border: 1px solid #ccd0d4; border-radius: 4px; text-align: center; }
-.snn-gumroad-email-status-yes { color: green; }
-.snn-gumroad-email-status-no { color: #999; }
-.snn-gumroad-user-email-preview { color: #666; margin-left: 10px; font-size: 13px; }
-.snn-gumroad-user-username { font-size: 14px; }
-.snn-gumroad-save-reminder { background: #f9f9f9; border-left: 4px solid #000; padding: 15px; margin: 15px 0; }
-.snn-gumroad-spinner-container { text-align: center; padding: 20px; }
-.snn-gumroad-wide-layout { width: 100%; max-width: none; }        
+.snn-lemonsqueezy-stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+.snn-lemonsqueezy-stat-card { background: #fff; color: #333; padding: 25px; border-radius: 8px; border: 1px solid #ddd; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.snn-lemonsqueezy-stat-card-header { font-size: 14px; margin-bottom: 10px; color: #666; }
+.snn-lemonsqueezy-stat-card-value { font-size: 22px; font-weight: bold; color: #000; }
+.snn-lemonsqueezy-stat-card-footer { font-size: 12px; margin-top: 10px; color: #666; }
+.snn-lemonsqueezy-section { padding: 20px; background: white; border: 1px solid #ccd0d4; margin-bottom: 20px; border-radius: 4px; }
+.snn-lemonsqueezy-section h2 { margin-top: 0; padding-bottom: 10px; border-bottom: 2px solid #000; }
+.snn-lemonsqueezy-recent-logs-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.snn-lemonsqueezy-recent-logs-header h2 { margin: 0; border-bottom: none; }
+.snn-lemonsqueezy-products-notice { background: #f9f9f9; border-left: 4px solid #000; padding: 15px; margin: 20px 0; }
+.snn-lemonsqueezy-products-loading { display: none; text-align: center; padding: 20px; }
+.snn-lemonsqueezy-products-list { display: none; }
+.snn-lemonsqueezy-products-list table { margin-top: 20px; }
+.snn-lemonsqueezy-products-list th { padding: 10px; background: #f5f5f5; font-weight: 600; }
+.snn-lemonsqueezy-products-list td { padding: 10px; vertical-align: top; }
+.snn-lemonsqueezy-product-roles-checkboxes { }
+.snn-lemonsqueezy-product-roles-checkboxes label { display: block; margin: 3px 0; font-weight: normal; }
+.snn-lemonsqueezy-api-info { background: #f0f8ff; padding: 15px; border-left: 4px solid #000; }
+.snn-lemonsqueezy-email-tags { margin-top: 15px; padding: 15px; background: #f0f0f1; border-left: 4px solid #000; }
+.snn-lemonsqueezy-email-tags h4 { margin-top: 0; }
+.snn-lemonsqueezy-email-tags ul { margin: 10px 0; padding-left: 20px; }
+.snn-lemonsqueezy-search-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 15px; }
+.snn-lemonsqueezy-search-filters input { width: 100%; }
+.snn-lemonsqueezy-search-actions { display: flex; gap: 10px; }
+.snn-lemonsqueezy-search-total { margin-left: auto; align-self: center; color: #666; }
+.snn-lemonsqueezy-log-entry { background: white; padding: 15px; margin-bottom: 10px; border: 1px solid #ccd0d4; border-radius: 4px; }
+.snn-lemonsqueezy-log-header { cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+.snn-lemonsqueezy-log-timestamp { margin-left: 15px; color: #666; font-size: 12px; }
+.snn-lemonsqueezy-log-details { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; }
+.snn-lemonsqueezy-log-details pre { background: #f5f5f5; padding: 10px; overflow-x: auto; font-size: 12px; }
+.snn-lemonsqueezy-user-entry { background: white; padding: 15px; margin-bottom: 10px; border: 1px solid #ccd0d4; border-radius: 4px; }
+.snn-lemonsqueezy-user-entry:hover { box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: box-shadow 0.2s; }
+.snn-lemonsqueezy-user-header { cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 15px; }
+.snn-lemonsqueezy-user-header:hover { background: #f9f9f9; }
+.snn-lemonsqueezy-user-main-info { flex: 1; display: flex; align-items: center; gap: 15px; }
+.snn-lemonsqueezy-user-meta-info { display: flex; gap: 15px; align-items: center; font-size: 12px; color: #666; }
+.snn-lemonsqueezy-user-details { display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee; }
+.snn-lemonsqueezy-user-details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.snn-lemonsqueezy-user-actions { margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee; display: flex; gap: 10px; }
+.snn-lemonsqueezy-user-details h3 { margin-top: 0; font-size: 14px; color: #000; }
+.snn-lemonsqueezy-user-details table { font-size: 13px; }
+.snn-lemonsqueezy-user-details th { width: 40%; padding: 8px; background: #f9f9f9; }
+.snn-lemonsqueezy-user-details td { padding: 8px; }
+.snn-lemonsqueezy-purchase-history { max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; }
+.snn-lemonsqueezy-purchase-history table { font-size: 12px; }
+.snn-lemonsqueezy-purchase-history th { padding: 6px; background: #f5f5f5; }
+.snn-lemonsqueezy-purchase-history td { padding: 6px; }
+.snn-lemonsqueezy-raw-data { background: #f5f5f5; padding: 10px; border-radius: 4px; max-height: 300px; overflow-y: auto; }
+.snn-lemonsqueezy-raw-data pre { margin: 0; font-size: 11px; white-space: pre-wrap; word-wrap: break-word; }
+.snn-lemonsqueezy-pagination { padding: 15px; background: white; border: 1px solid #ccd0d4; border-radius: 4px; margin-top: 10px; }
+.snn-lemonsqueezy-pagination .tablenav-pages { text-align: center; }
+.snn-lemonsqueezy-pagination .page-numbers { padding: 5px 10px; margin: 0 2px; border: 1px solid #ccd0d4; background: white; text-decoration: none; display: inline-block; color: #000; }
+.snn-lemonsqueezy-pagination .page-numbers.current { background: #000; color: white; border-color: #000; }
+.snn-lemonsqueezy-pagination .page-numbers:hover:not(.current) { background: #f0f0f1; }
+.snn-lemonsqueezy-settings-form { display: flex; align-items: center; gap: 15px; }
+.snn-lemonsqueezy-no-results { background: white; padding: 20px; border: 1px solid #ccd0d4; border-radius: 4px; text-align: center; }
+.snn-lemonsqueezy-email-status-yes { color: green; }
+.snn-lemonsqueezy-email-status-no { color: #999; }
+.snn-lemonsqueezy-user-email-preview { color: #666; margin-left: 10px; font-size: 13px; }
+.snn-lemonsqueezy-user-username { font-size: 14px; }
+.snn-lemonsqueezy-save-reminder { background: #f9f9f9; border-left: 4px solid #000; padding: 15px; margin: 15px 0; }
+.snn-lemonsqueezy-spinner-container { text-align: center; padding: 20px; }
+.snn-lemonsqueezy-wide-layout { width: 100%; max-width: none; }        
 </style>
         <?php
     }
@@ -184,9 +184,9 @@ class Gumroad_API_WordPress {
      * Plugin deactivation
      */
     public function deactivate() {
-        $timestamp = wp_next_scheduled('gumroad_api_check_sales');
+        $timestamp = wp_next_scheduled('lemonsqueezy_api_check_sales');
         if ($timestamp) {
-            wp_unschedule_event($timestamp, 'gumroad_api_check_sales');
+            wp_unschedule_event($timestamp, 'lemonsqueezy_api_check_sales');
         }
     }
     
@@ -197,7 +197,7 @@ class Gumroad_API_WordPress {
         $settings = get_option($this->option_name);
         $interval = isset($settings['cron_interval']) ? intval($settings['cron_interval']) : 120;
         
-        $schedules['gumroad_custom'] = array(
+        $schedules['lemonsqueezy_custom'] = array(
             'interval' => $interval,
             'display'  => sprintf(__('Every %d seconds', 'snn'), $interval)
         );
@@ -209,12 +209,12 @@ class Gumroad_API_WordPress {
      * Schedule cron job
      */
     private function schedule_cron() {
-        $timestamp = wp_next_scheduled('gumroad_api_check_sales');
+        $timestamp = wp_next_scheduled('lemonsqueezy_api_check_sales');
         if ($timestamp) {
-            wp_unschedule_event($timestamp, 'gumroad_api_check_sales');
+            wp_unschedule_event($timestamp, 'lemonsqueezy_api_check_sales');
         }
-        
-        wp_schedule_event(time(), 'gumroad_custom', 'gumroad_api_check_sales');
+
+        wp_schedule_event(time(), 'lemonsqueezy_custom', 'lemonsqueezy_api_check_sales');
     }
     
     /**
@@ -222,57 +222,57 @@ class Gumroad_API_WordPress {
      */
     public function add_admin_menu() {
         add_menu_page(
-            __('Gumroad API', 'snn'),
-            __('Gumroad API', 'snn'),
+            __('LemonSqueezy API', 'snn'),
+            __('LemonSqueezy API', 'snn'),
             'manage_options',
-            'gumroad-api-dashboard',
+            'lemonsqueezy-api-dashboard',
             array($this, 'dashboard_page'),
             'dashicons-cart',
             120
         );
-        
+
         add_submenu_page(
-            'gumroad-api-dashboard',
+            'lemonsqueezy-api-dashboard',
             __('Dashboard', 'snn'),
             __('Dashboard', 'snn'),
             'manage_options',
-            'gumroad-api-dashboard',
+            'lemonsqueezy-api-dashboard',
             array($this, 'dashboard_page')
         );
-        
+
         add_submenu_page(
-            'gumroad-api-dashboard',
+            'lemonsqueezy-api-dashboard',
             __('Settings', 'snn'),
             __('Settings', 'snn'),
             'manage_options',
-            'gumroad-api-settings',
+            'lemonsqueezy-api-settings',
             array($this, 'settings_page')
         );
-        
+
         add_submenu_page(
-            'gumroad-api-dashboard',
+            'lemonsqueezy-api-dashboard',
             __('API Logs', 'snn'),
             __('API Logs', 'snn'),
             'manage_options',
-            'gumroad-api-logs',
+            'lemonsqueezy-api-logs',
             array($this, 'logs_page')
         );
-        
+
         add_submenu_page(
-            'gumroad-api-dashboard',
+            'lemonsqueezy-api-dashboard',
             __('User List', 'snn'),
             __('User List', 'snn'),
             'manage_options',
-            'gumroad-api-users',
+            'lemonsqueezy-api-users',
             array($this, 'users_page')
         );
-        
+
         add_submenu_page(
-            'gumroad-api-dashboard',
+            'lemonsqueezy-api-dashboard',
             __('Uninstall Plugin', 'snn'),
             __('Uninstall Plugin', 'snn'),
             'manage_options',
-            'gumroad-api-uninstall',
+            'lemonsqueezy-api-uninstall',
             array($this, 'uninstall_page')
         );
     }
@@ -281,9 +281,113 @@ class Gumroad_API_WordPress {
      * Register settings
      */
     public function register_settings() {
-        register_setting('gumroad_api_settings_group', $this->option_name);
+        register_setting('lemonsqueezy_api_settings_group', $this->option_name);
     }
-    
+
+    /**
+     * Create HTTP headers for LemonSqueezy API requests
+     */
+    private function get_api_headers($access_token) {
+        return array(
+            'Authorization' => 'Bearer ' . $access_token,
+            'Accept' => 'application/vnd.api+json',
+            'Content-Type' => 'application/vnd.api+json'
+        );
+    }
+
+    /**
+     * Parse LemonSqueezy JSON:API orders response
+     */
+    private function parse_lemonsqueezy_orders($json_data) {
+        $orders = array();
+        if (!isset($json_data['data']) || !is_array($json_data['data'])) {
+            return $orders;
+        }
+
+        foreach ($json_data['data'] as $item) {
+            if (!isset($item['type']) || $item['type'] !== 'orders') {
+                continue;
+            }
+
+            $attrs = isset($item['attributes']) ? $item['attributes'] : array();
+            $orders[] = array(
+                'id' => isset($item['id']) ? $item['id'] : '',
+                'email' => isset($attrs['user_email']) ? $attrs['user_email'] : (isset($attrs['customer_email']) ? $attrs['customer_email'] : ''),
+                'product_name' => isset($attrs['product_name']) ? $attrs['product_name'] : '',
+                'product_id' => isset($attrs['product_id']) ? strval($attrs['product_id']) : '',
+                'refunded' => isset($attrs['refunded']) ? $attrs['refunded'] : false,
+                'chargedback' => false, // LemonSqueezy may not have this
+                'partially_refunded' => false, // Check if available
+                'cancelled' => isset($attrs['status']) && $attrs['status'] === 'cancelled',
+                'ended' => false, // For subscriptions
+                'subscription_id' => $this->extract_subscription_id($item)
+            );
+        }
+        return $orders;
+    }
+
+    /**
+     * Extract subscription ID from relationships
+     */
+    private function extract_subscription_id($item) {
+        if (isset($item['relationships']['subscription']['data']['id'])) {
+            return $item['relationships']['subscription']['data']['id'];
+        }
+        return '';
+    }
+
+    /**
+     * Parse LemonSqueezy JSON:API user response
+     */
+    private function parse_lemonsqueezy_user($json_data) {
+        if (!isset($json_data['data']['attributes'])) {
+            return null;
+        }
+        return array(
+            'id' => isset($json_data['data']['id']) ? $json_data['data']['id'] : '',
+            'name' => isset($json_data['data']['attributes']['name']) ? $json_data['data']['attributes']['name'] : '',
+            'email' => isset($json_data['data']['attributes']['email']) ? $json_data['data']['attributes']['email'] : ''
+        );
+    }
+
+    /**
+     * Parse LemonSqueezy JSON:API products response
+     */
+    private function parse_lemonsqueezy_products($json_data) {
+        $products = array();
+        if (!isset($json_data['data'])) {
+            return $products;
+        }
+
+        foreach ($json_data['data'] as $item) {
+            if (!isset($item['type']) || $item['type'] !== 'products') {
+                continue;
+            }
+            $attrs = isset($item['attributes']) ? $item['attributes'] : array();
+            $products[] = array(
+                'id' => isset($item['id']) ? $item['id'] : '',
+                'name' => isset($attrs['name']) ? $attrs['name'] : '',
+                'published' => isset($attrs['status']) && $attrs['status'] === 'published'
+            );
+        }
+        return $products;
+    }
+
+    /**
+     * Get error message from LemonSqueezy JSON:API response
+     */
+    private function get_api_error_message($json_data) {
+        if (isset($json_data['errors']) && is_array($json_data['errors'])) {
+            if (!empty($json_data['errors'][0]['detail'])) {
+                return $json_data['errors'][0]['detail'];
+            }
+            if (!empty($json_data['errors'][0]['title'])) {
+                return $json_data['errors'][0]['title'];
+            }
+        }
+        return 'Unknown API error';
+    }
+
     /**
      * Check recent sales via API (cron job)
      */
@@ -297,30 +401,37 @@ class Gumroad_API_WordPress {
         }
         
         $sales_limit = isset($settings['sales_limit']) ? intval($settings['sales_limit']) : 50;
-        
-        // Fetch recent sales
-        $response = wp_remote_get('https://api.gumroad.com/v2/sales?access_token=' . $access_token);
-        
+
+        // Fetch recent orders from LemonSqueezy API
+        $response = wp_remote_get('https://api.lemonsqueezy.com/v1/orders', array(
+            'headers' => $this->get_api_headers($access_token)
+        ));
+
         if (is_wp_error($response)) {
             $this->log_activity('Cron API error', array('error' => $response->get_error_message()));
             return;
         }
-        
+
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
-        
-        if (!isset($data['success']) || !$data['success']) {
-            $this->log_activity('Cron API error', array('error' => 'API returned unsuccessful response', 'response' => $data));
+
+        // Check for JSON:API structure
+        if (!isset($data['data'])) {
+            $error_msg = $this->get_api_error_message($data);
+            $this->log_activity('Cron API error', array('error' => $error_msg, 'response' => $data));
             return;
         }
-        
-        if (isset($data['sales']) && is_array($data['sales'])) {
-            $processed_sales = get_option('gumroad_processed_sales', array());
+
+        // Parse orders using helper function
+        $orders = $this->parse_lemonsqueezy_orders($data);
+
+        if (!empty($orders)) {
+            $processed_sales = get_option('lemonsqueezy_processed_sales', array());
             $new_sales_count = 0;
             $refunds_processed = 0;
             $subscriptions_updated = 0;
-            
-            foreach (array_slice($data['sales'], 0, $sales_limit) as $sale) {
+
+            foreach (array_slice($orders, 0, $sales_limit) as $sale) {
                 $sale_id = isset($sale['id']) ? $sale['id'] : '';
                 $email = isset($sale['email']) ? sanitize_email($sale['email']) : '';
                 
@@ -357,7 +468,7 @@ class Gumroad_API_WordPress {
                     // Sale was processed before, but check if user still exists
                     if (!empty($email)) {
                         $user = get_user_by('email', $email);
-                        if ($user && get_user_meta($user->ID, 'gumroad_sale_id', true) === $sale_id) {
+                        if ($user && get_user_meta($user->ID, 'lemonsqueezy_sale_id', true) === $sale_id) {
                             // User exists and matches this sale, skip processing
                             $should_process = false;
                         } else {
@@ -387,10 +498,10 @@ class Gumroad_API_WordPress {
                 $processed_sales = array_slice($processed_sales, -1000);
             }
             
-            update_option('gumroad_processed_sales', $processed_sales);
-            
+            update_option('lemonsqueezy_processed_sales', $processed_sales);
+
             $this->log_activity('Cron completed', array(
-                'total_sales_checked' => count($data['sales']),
+                'total_sales_checked' => count($orders),
                 'new_sales_processed' => $new_sales_count,
                 'refunds_processed' => $refunds_processed,
                 'subscriptions_updated' => $subscriptions_updated
@@ -475,14 +586,14 @@ class Gumroad_API_WordPress {
                 $user->add_role($roles[$i]); // Add additional roles
             }
 
-            // Store Gumroad metadata
+            // Store LemonSqueezy metadata
             $sale_id = isset($sale_data['id']) ? $sale_data['id'] : '';
-            update_user_meta($user_id, 'gumroad_sale_id', $sale_id);
-            update_user_meta($user_id, 'gumroad_product_name', $product_name);
-            update_user_meta($user_id, 'gumroad_product_id', $product_id);
-            update_user_meta($user_id, 'gumroad_created_date', current_time('mysql'));
-            update_user_meta($user_id, 'gumroad_sale_data', json_encode($sale_data));
-            update_user_meta($user_id, 'gumroad_assigned_roles', json_encode($roles));
+            update_user_meta($user_id, 'lemonsqueezy_sale_id', $sale_id);
+            update_user_meta($user_id, 'lemonsqueezy_product_name', $product_name);
+            update_user_meta($user_id, 'lemonsqueezy_product_id', $product_id);
+            update_user_meta($user_id, 'lemonsqueezy_created_date', current_time('mysql'));
+            update_user_meta($user_id, 'lemonsqueezy_sale_data', json_encode($sale_data));
+            update_user_meta($user_id, 'lemonsqueezy_assigned_roles', json_encode($roles));
             
             // Send welcome email
             $email_sent = false;
@@ -490,8 +601,8 @@ class Gumroad_API_WordPress {
                 $email_sent = $this->send_welcome_email($user, $password, $product_name);
             }
             
-            update_user_meta($user_id, 'gumroad_email_sent', $email_sent ? 'yes' : 'no');
-            update_user_meta($user_id, 'gumroad_email_sent_date', $email_sent ? current_time('mysql') : '');
+            update_user_meta($user_id, 'lemonsqueezy_email_sent', $email_sent ? 'yes' : 'no');
+            update_user_meta($user_id, 'lemonsqueezy_email_sent_date', $email_sent ? current_time('mysql') : '');
             
             $this->log_activity('User created', array(
                 'user_id' => $user_id,
@@ -515,15 +626,15 @@ class Gumroad_API_WordPress {
             }
             
             if (!empty($roles_added)) {
-                // Update Gumroad metadata for existing user
+                // Update LemonSqueezy metadata for existing user
                 $sale_id = isset($sale_data['id']) ? $sale_data['id'] : '';
-                update_user_meta($user->ID, 'gumroad_last_purchase_date', current_time('mysql'));
-                update_user_meta($user->ID, 'gumroad_last_product_name', $product_name);
-                update_user_meta($user->ID, 'gumroad_last_product_id', $product_id);
-                update_user_meta($user->ID, 'gumroad_last_sale_id', $sale_id);
+                update_user_meta($user->ID, 'lemonsqueezy_last_purchase_date', current_time('mysql'));
+                update_user_meta($user->ID, 'lemonsqueezy_last_product_name', $product_name);
+                update_user_meta($user->ID, 'lemonsqueezy_last_product_id', $product_id);
+                update_user_meta($user->ID, 'lemonsqueezy_last_sale_id', $sale_id);
                 
                 // Append to purchase history
-                $purchase_history = get_user_meta($user->ID, 'gumroad_purchase_history', true);
+                $purchase_history = get_user_meta($user->ID, 'lemonsqueezy_purchase_history', true);
                 if (!$purchase_history) {
                     $purchase_history = array();
                 } else {
@@ -536,7 +647,7 @@ class Gumroad_API_WordPress {
                     'sale_id' => $sale_id,
                     'roles_added' => $roles_added
                 );
-                update_user_meta($user->ID, 'gumroad_purchase_history', json_encode($purchase_history));
+                update_user_meta($user->ID, 'lemonsqueezy_purchase_history', json_encode($purchase_history));
                 
                 $this->log_activity('User roles updated', array(
                     'user_id' => $user->ID,
@@ -718,8 +829,8 @@ class Gumroad_API_WordPress {
                 'product' => $product_name
             ));
         } else {
-            // Remove roles assigned by Gumroad
-            $assigned_roles = get_user_meta($user->ID, 'gumroad_assigned_roles', true);
+            // Remove roles assigned by LemonSqueezy
+            $assigned_roles = get_user_meta($user->ID, 'lemonsqueezy_assigned_roles', true);
             if ($assigned_roles) {
                 $roles = json_decode($assigned_roles, true);
                 if (is_array($roles)) {
@@ -729,8 +840,8 @@ class Gumroad_API_WordPress {
                 }
             }
             
-            update_user_meta($user->ID, 'gumroad_refunded', 'yes');
-            update_user_meta($user->ID, 'gumroad_refunded_date', current_time('mysql'));
+            update_user_meta($user->ID, 'lemonsqueezy_refunded', 'yes');
+            update_user_meta($user->ID, 'lemonsqueezy_refunded_date', current_time('mysql'));
             
             $this->log_activity('User roles removed due to refund', array(
                 'user_id' => $user->ID,
@@ -775,8 +886,8 @@ class Gumroad_API_WordPress {
                 'product' => $product_name
             ));
         } else {
-            // Remove roles assigned by Gumroad
-            $assigned_roles = get_user_meta($user->ID, 'gumroad_assigned_roles', true);
+            // Remove roles assigned by LemonSqueezy
+            $assigned_roles = get_user_meta($user->ID, 'lemonsqueezy_assigned_roles', true);
             if ($assigned_roles) {
                 $roles = json_decode($assigned_roles, true);
                 if (is_array($roles)) {
@@ -786,8 +897,8 @@ class Gumroad_API_WordPress {
                 }
             }
             
-            update_user_meta($user->ID, 'gumroad_subscription_status', 'cancelled');
-            update_user_meta($user->ID, 'gumroad_subscription_ended_date', current_time('mysql'));
+            update_user_meta($user->ID, 'lemonsqueezy_subscription_status', 'cancelled');
+            update_user_meta($user->ID, 'lemonsqueezy_subscription_ended_date', current_time('mysql'));
             
             $this->log_activity('Subscription cancelled/ended', array(
                 'user_id' => $user->ID,
@@ -809,74 +920,74 @@ class Gumroad_API_WordPress {
         
         ?>
         <div class="wrap">
-            <h1><?php _e('Gumroad API Dashboard', 'snn'); ?></h1>
+            <h1><?php _e('LemonSqueezy API Dashboard', 'snn'); ?></h1>
             
             <!-- Statistics Grid -->
-            <div class="snn-gumroad-stats-grid">
+            <div class="snn-lemonsqueezy-stats-grid">
                 
                 <!-- Total Sales Processed -->
-                <div class="snn-gumroad-stat-card">
-                    <div class="snn-gumroad-stat-card-header"><?php _e('Total Sales Processed', 'snn'); ?></div>
-                    <div class="snn-gumroad-stat-card-value"><?php echo number_format($stats['total_sales']); ?></div>
-                    <div class="snn-gumroad-stat-card-footer"><?php _e('All time', 'snn'); ?></div>
+                <div class="snn-lemonsqueezy-stat-card">
+                    <div class="snn-lemonsqueezy-stat-card-header"><?php _e('Total Sales Processed', 'snn'); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-value"><?php echo number_format($stats['total_sales']); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-footer"><?php _e('All time', 'snn'); ?></div>
                 </div>
                 
                 <!-- Users Created This Month -->
-                <div class="snn-gumroad-stat-card">
-                    <div class="snn-gumroad-stat-card-header"><?php _e('Users Created This Month', 'snn'); ?></div>
-                    <div class="snn-gumroad-stat-card-value"><?php echo number_format($stats['users_this_month']); ?></div>
-                    <div class="snn-gumroad-stat-card-footer"><?php echo date('F Y'); ?></div>
+                <div class="snn-lemonsqueezy-stat-card">
+                    <div class="snn-lemonsqueezy-stat-card-header"><?php _e('Users Created This Month', 'snn'); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-value"><?php echo number_format($stats['users_this_month']); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-footer"><?php echo date('F Y'); ?></div>
                 </div>
                 
                 <!-- Total Users -->
-                <div class="snn-gumroad-stat-card">
-                    <div class="snn-gumroad-stat-card-header"><?php _e('Total Gumroad Users', 'snn'); ?></div>
-                    <div class="snn-gumroad-stat-card-value"><?php echo number_format($stats['total_users']); ?></div>
-                    <div class="snn-gumroad-stat-card-footer"><?php _e('Active accounts', 'snn'); ?></div>
+                <div class="snn-lemonsqueezy-stat-card">
+                    <div class="snn-lemonsqueezy-stat-card-header"><?php _e('Total LemonSqueezy Users', 'snn'); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-value"><?php echo number_format($stats['total_users']); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-footer"><?php _e('Active accounts', 'snn'); ?></div>
                 </div>
                 
                 <!-- Email Success Rate -->
-                <div class="snn-gumroad-stat-card">
-                    <div class="snn-gumroad-stat-card-header"><?php _e('Email Success Rate', 'snn'); ?></div>
-                    <div class="snn-gumroad-stat-card-value"><?php echo $stats['email_success_rate']; ?>%</div>
-                    <div class="snn-gumroad-stat-card-footer"><?php echo $stats['emails_sent']; ?> <?php _e('sent', 'snn'); ?></div>
+                <div class="snn-lemonsqueezy-stat-card">
+                    <div class="snn-lemonsqueezy-stat-card-header"><?php _e('Email Success Rate', 'snn'); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-value"><?php echo $stats['email_success_rate']; ?>%</div>
+                    <div class="snn-lemonsqueezy-stat-card-footer"><?php echo $stats['emails_sent']; ?> <?php _e('sent', 'snn'); ?></div>
                 </div>
                 
                 <!-- Most Popular Product -->
-                <div class="snn-gumroad-stat-card">
-                    <div class="snn-gumroad-stat-card-header"><?php _e('Most Popular Product', 'snn'); ?></div>
-                    <div class="snn-gumroad-stat-card-value"><?php echo esc_html($stats['top_product_name']); ?></div>
-                    <div class="snn-gumroad-stat-card-footer"><?php echo number_format($stats['top_product_count']); ?> <?php _e('purchases', 'snn'); ?></div>
+                <div class="snn-lemonsqueezy-stat-card">
+                    <div class="snn-lemonsqueezy-stat-card-header"><?php _e('Most Popular Product', 'snn'); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-value"><?php echo esc_html($stats['top_product_name']); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-footer"><?php echo number_format($stats['top_product_count']); ?> <?php _e('purchases', 'snn'); ?></div>
                 </div>
                 
                 <!-- Active Subscriptions -->
-                <div class="snn-gumroad-stat-card">
-                    <div class="snn-gumroad-stat-card-header"><?php _e('Active Subscriptions', 'snn'); ?></div>
-                    <div class="snn-gumroad-stat-card-value"><?php echo number_format($stats['active_subscriptions']); ?></div>
-                    <div class="snn-gumroad-stat-card-footer"><?php _e('Currently active', 'snn'); ?></div>
+                <div class="snn-lemonsqueezy-stat-card">
+                    <div class="snn-lemonsqueezy-stat-card-header"><?php _e('Active Subscriptions', 'snn'); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-value"><?php echo number_format($stats['active_subscriptions']); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-footer"><?php _e('Currently active', 'snn'); ?></div>
                 </div>
                 
                 <!-- Refunds Processed -->
-                <div class="snn-gumroad-stat-card">
-                    <div class="snn-gumroad-stat-card-header"><?php _e('Refunds Processed', 'snn'); ?></div>
-                    <div class="snn-gumroad-stat-card-value"><?php echo number_format($stats['total_refunds']); ?></div>
-                    <div class="snn-gumroad-stat-card-footer"><?php _e('All time', 'snn'); ?></div>
+                <div class="snn-lemonsqueezy-stat-card">
+                    <div class="snn-lemonsqueezy-stat-card-header"><?php _e('Refunds Processed', 'snn'); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-value"><?php echo number_format($stats['total_refunds']); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-footer"><?php _e('All time', 'snn'); ?></div>
                 </div>
                 
                 <!-- Recent Activity -->
-                <div class="snn-gumroad-stat-card">
-                    <div class="snn-gumroad-stat-card-header"><?php _e('Recent Activity', 'snn'); ?></div>
-                    <div class="snn-gumroad-stat-card-value"><?php echo number_format($stats['activity_last_24h']); ?></div>
-                    <div class="snn-gumroad-stat-card-footer"><?php _e('events in last 24 hours', 'snn'); ?></div>
+                <div class="snn-lemonsqueezy-stat-card">
+                    <div class="snn-lemonsqueezy-stat-card-header"><?php _e('Recent Activity', 'snn'); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-value"><?php echo number_format($stats['activity_last_24h']); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-footer"><?php _e('events in last 24 hours', 'snn'); ?></div>
                 </div>
                 
             </div>
             
             <!-- Recent Logs Preview -->
-            <div class="snn-gumroad-section">
-                <div class="snn-gumroad-recent-logs-header">
+            <div class="snn-lemonsqueezy-section">
+                <div class="snn-lemonsqueezy-recent-logs-header">
                     <h2><?php _e('Recent Activity Logs', 'snn'); ?></h2>
-                    <a href="<?php echo admin_url('admin.php?page=gumroad-api-logs'); ?>" class="button"><?php _e('View All Logs', 'snn'); ?></a>
+                    <a href="<?php echo admin_url('admin.php?page=lemonsqueezy-api-logs'); ?>" class="button"><?php _e('View All Logs', 'snn'); ?></a>
                 </div>
                 
                 <?php
@@ -891,7 +1002,7 @@ class Gumroad_API_WordPress {
                         if (isset($log['data']['email'])) $data_preview .= esc_html($log['data']['email']);
                         if (isset($log['data']['product'])) $data_preview .= ' - ' . esc_html($log['data']['product']);
                         echo '<tr>';
-                        echo '<td class="snn-gumroad-log-timestamp">' . esc_html($log['timestamp']) . '</td>';
+                        echo '<td class="snn-lemonsqueezy-log-timestamp">' . esc_html($log['timestamp']) . '</td>';
                         echo '<td><strong>' . esc_html($log['type']) . '</strong></td>';
                         echo '<td>' . $data_preview . '</td>';
                         echo '</tr>';
@@ -903,7 +1014,7 @@ class Gumroad_API_WordPress {
             
             <!-- Product Statistics -->
             <?php if (!empty($stats['product_breakdown'])): ?>
-            <div class="snn-gumroad-section">
+            <div class="snn-lemonsqueezy-section">
                 <h2><?php _e('Product Breakdown', 'snn'); ?></h2>
                 <table class="wp-list-table widefat fixed striped">
                     <thead>
@@ -948,9 +1059,9 @@ class Gumroad_API_WordPress {
             'product_breakdown' => array()
         );
         
-        // Total users with Gumroad metadata
+        // Total users with LemonSqueezy metadata
         $user_query = new WP_User_Query(array(
-            'meta_key' => 'gumroad_sale_id',
+            'meta_key' => 'lemonsqueezy_sale_id',
             'meta_compare' => 'EXISTS',
             'fields' => 'all'
         ));
@@ -965,18 +1076,18 @@ class Gumroad_API_WordPress {
         $active_subs = 0;
         
         foreach ($all_users as $user) {
-            $created_date = get_user_meta($user->ID, 'gumroad_created_date', true);
+            $created_date = get_user_meta($user->ID, 'lemonsqueezy_created_date', true);
             if ($created_date && $created_date >= $month_start) {
                 $users_this_month++;
             }
             
             // Count emails sent
-            if (get_user_meta($user->ID, 'gumroad_email_sent', true) === 'yes') {
+            if (get_user_meta($user->ID, 'lemonsqueezy_email_sent', true) === 'yes') {
                 $emails_sent_count++;
             }
             
             // Product breakdown
-            $product = get_user_meta($user->ID, 'gumroad_product_name', true);
+            $product = get_user_meta($user->ID, 'lemonsqueezy_product_name', true);
             if ($product) {
                 if (!isset($product_counts[$product])) {
                     $product_counts[$product] = 0;
@@ -985,9 +1096,9 @@ class Gumroad_API_WordPress {
             }
             
             // Active subscriptions
-            $sub_status = get_user_meta($user->ID, 'gumroad_subscription_status', true);
+            $sub_status = get_user_meta($user->ID, 'lemonsqueezy_subscription_status', true);
             if (empty($sub_status) || $sub_status !== 'cancelled') {
-                $sale_data = get_user_meta($user->ID, 'gumroad_sale_data', true);
+                $sale_data = get_user_meta($user->ID, 'lemonsqueezy_sale_data', true);
                 if ($sale_data) {
                     $sale_obj = json_decode($sale_data, true);
                     if (isset($sale_obj['subscription_id']) && !empty($sale_obj['subscription_id'])) {
@@ -1045,7 +1156,7 @@ class Gumroad_API_WordPress {
      * Settings page
      */
     public function settings_page() {
-        if (isset($_POST['gumroad_settings_nonce']) && wp_verify_nonce($_POST['gumroad_settings_nonce'], 'gumroad_save_settings')) {
+        if (isset($_POST['lemonsqueezy_settings_nonce']) && wp_verify_nonce($_POST['lemonsqueezy_settings_nonce'], 'lemonsqueezy_save_settings')) {
             $this->save_settings($_POST);
             echo '<div class="notice notice-success"><p>' . __('Settings saved successfully!', 'snn') . '</p></div>';
         }
@@ -1056,27 +1167,27 @@ class Gumroad_API_WordPress {
         
         ?>
         <div class="wrap">
-            <h1><?php _e('Gumroad API Settings', 'snn'); ?></h1>
+            <h1><?php _e('LemonSqueezy API Settings', 'snn'); ?></h1>
             
             <form method="post" action="">
-                <?php wp_nonce_field('gumroad_save_settings', 'gumroad_settings_nonce'); ?>
+                <?php wp_nonce_field('lemonsqueezy_save_settings', 'lemonsqueezy_settings_nonce'); ?>
                 
                 <!-- API Connection Section -->
-                <div class="snn-gumroad-section">
+                <div class="snn-lemonsqueezy-section">
                     <h2><?php _e('API Connection', 'snn'); ?></h2>
-                    <div class="snn-gumroad-api-info">
+                    <div class="snn-lemonsqueezy-api-info">
                         <strong>ℹ️ <?php _e('API-Based Sales Monitoring', 'snn'); ?></strong><br>
-                        <?php _e('This plugin uses Gumroad API to automatically check for new sales. Configure the check interval in the "Cron Settings" tab.', 'snn'); ?>
+                        <?php _e('This plugin uses LemonSqueezy API to automatically check for new sales. Configure the check interval in the "Cron Settings" tab.', 'snn'); ?>
                     </div>
                     <table class="form-table">
                         <tr>
-                            <th scope="row"><label for="access_token"><?php _e('Gumroad Access Token', 'snn'); ?></label></th>
+                            <th scope="row"><label for="access_token"><?php _e('LemonSqueezy API Key', 'snn'); ?></label></th>
                             <td>
                                 <input type="password" name="access_token" id="access_token" value="<?php echo esc_attr($settings['access_token']); ?>" class="regular-text" />
                                 <button type="button" class="button" onclick="togglePassword('access_token')"><?php _e('Show/Hide', 'snn'); ?></button>
                                 <button type="button" class="button button-primary" onclick="testApiConnection()"><?php _e('Test & Fetch Products', 'snn'); ?></button>
                                 <p class="description">
-                                    <?php _e('1. Go to your Gumroad Settings → Applications<br>2. Create a new application (or use existing)<br>3. Click "Generate access token"<br>4. Paste the token here', 'snn'); ?>
+                                    <?php _e('1. Go to your LemonSqueezy Settings → API<br>2. Click "Create API key" or use an existing one<br>3. Copy the API key<br>4. Paste the key here', 'snn'); ?>
                                 </p>
                                 <div id="api-test-result"></div>
                             </td>
@@ -1085,7 +1196,7 @@ class Gumroad_API_WordPress {
                 </div>
                 
                 <!-- User Management Section -->
-                <div class="snn-gumroad-section">
+                <div class="snn-lemonsqueezy-section">
                     <h2><?php _e('User Management', 'snn'); ?></h2>
                     <table class="form-table">
                         <tr>
@@ -1112,17 +1223,17 @@ class Gumroad_API_WordPress {
                     <h3><?php _e('Product-Specific Configuration', 'snn'); ?></h3>
                     <p><?php _e('For each product below, you can enable automatic user creation and configure specific roles. This gives you complete control over which products trigger user account creation.', 'snn'); ?></p>
                     
-                    <div id="products-notice" class="snn-gumroad-products-notice">
+                    <div id="products-notice" class="snn-lemonsqueezy-products-notice">
                         <p><strong><?php _e('⚠️ Please test your API connection first to load your products.', 'snn'); ?></strong></p>
                         <p><?php _e('Go to the "Connection" tab and click "Test & Fetch Products" button.', 'snn'); ?></p>
                     </div>
                     
-                    <div id="products-loading" class="snn-gumroad-products-loading">
+                    <div id="products-loading" class="snn-lemonsqueezy-products-loading">
                         <span class="spinner is-active"></span>
                         <p><?php _e('Loading products...', 'snn'); ?></p>
                     </div>
                     
-                    <div id="products-list" class="snn-gumroad-products-list">
+                    <div id="products-list" class="snn-lemonsqueezy-products-list">
                         <table class="wp-list-table widefat fixed striped">
                             <thead>
                                 <tr>
@@ -1148,7 +1259,7 @@ class Gumroad_API_WordPress {
                 </div>
                 
                 <!-- Welcome Email Section -->
-                <div class="snn-gumroad-section">
+                <div class="snn-lemonsqueezy-section">
                     <h2><?php _e('Welcome Email Settings', 'snn'); ?></h2>
                     <table class="form-table">
                         <tr>
@@ -1170,7 +1281,7 @@ class Gumroad_API_WordPress {
                             <th scope="row"><label for="email_template"><?php _e('Email Template (HTML)', 'snn'); ?></label></th>
                             <td>
                                 <textarea name="email_template" id="email_template" rows="20" class="large-text code"><?php echo esc_textarea($settings['email_template']); ?></textarea>
-                                <div class="snn-gumroad-email-tags">
+                                <div class="snn-lemonsqueezy-email-tags">
                                     <h4>📧 <?php _e('Available Dynamic Tags:', 'snn'); ?></h4>
                                     <ul>
                                         <li><code>{{site_name}}</code> - <?php _e('Your site name', 'snn'); ?></li>
@@ -1196,7 +1307,7 @@ class Gumroad_API_WordPress {
                 </div>
                 
                 <!-- Cron Job Settings Section -->
-                <div class="snn-gumroad-section">
+                <div class="snn-lemonsqueezy-section">
                     <h2><?php _e('Cron Job Settings', 'snn'); ?></h2>
                     <table class="form-table">
                         <tr>
@@ -1217,7 +1328,7 @@ class Gumroad_API_WordPress {
                 </div>
                 
                 <!-- Refund Handling Section -->
-                <div class="snn-gumroad-section">
+                <div class="snn-lemonsqueezy-section">
                     <h2><?php _e('Refund Handling', 'snn'); ?></h2>
                     <table class="form-table">
                         <tr>
@@ -1248,7 +1359,7 @@ class Gumroad_API_WordPress {
                 </div>
                 
                 <!-- Subscription Management Section -->
-                <div class="snn-gumroad-section">
+                <div class="snn-lemonsqueezy-section">
                     <h2><?php _e('Subscription Management', 'snn'); ?></h2>
                     <table class="form-table">
                         <tr>
@@ -1324,7 +1435,7 @@ class Gumroad_API_WordPress {
                 </div>
                 
                 <!-- Log Settings Section -->
-                <div class="snn-gumroad-section">
+                <div class="snn-lemonsqueezy-section">
                     <h2><?php _e('Log Settings', 'snn'); ?></h2>
                     <table class="form-table">
                         <tr>
@@ -1342,7 +1453,7 @@ class Gumroad_API_WordPress {
         </div>
         
         <script>
-        var gumroadProducts = [];
+        var lemonsqueezyProducts = [];
         
         function togglePassword(id) {
             var input = document.getElementById(id);
@@ -1365,9 +1476,9 @@ class Gumroad_API_WordPress {
                 url: ajaxurl,
                 type: 'POST',
                 data: {
-                    action: 'gumroad_test_api',
+                    action: 'lemonsqueezy_test_api',
                     token: token,
-                    nonce: '<?php echo wp_create_nonce('gumroad_test_api'); ?>'
+                    nonce: '<?php echo wp_create_nonce('lemonsqueezy_test_api'); ?>'
                 },
                 success: function(response) {
                     if (response.success) {
@@ -1392,14 +1503,14 @@ class Gumroad_API_WordPress {
                 url: ajaxurl,
                 type: 'POST',
                 data: {
-                    action: 'gumroad_fetch_products',
+                    action: 'lemonsqueezy_fetch_products',
                     token: token,
-                    nonce: '<?php echo wp_create_nonce('gumroad_fetch_products'); ?>'
+                    nonce: '<?php echo wp_create_nonce('lemonsqueezy_fetch_products'); ?>'
                 },
                 success: function(response) {
                     jQuery('#products-loading').hide();
                     if (response.success) {
-                        gumroadProducts = response.data.products;
+                        lemonsqueezyProducts = response.data.products;
                         displayProducts(response.data.products);
                         jQuery('#products-list').show();
                     } else {
@@ -1418,7 +1529,7 @@ class Gumroad_API_WordPress {
             tbody.empty();
             
             if (products.length === 0) {
-                tbody.append('<tr><td colspan="4" style="text-align: center;">No products found. Create products in your Gumroad dashboard first.</td></tr>');
+                tbody.append('<tr><td colspan="4" style="text-align: center;">No products found. Create products in your LemonSqueezy dashboard first.</td></tr>');
                 return;
             }
             
@@ -1428,7 +1539,7 @@ class Gumroad_API_WordPress {
             
             // Show save reminder
             jQuery('#save-products-reminder').remove();
-            jQuery('<div id="save-products-reminder" class="snn-gumroad-save-reminder"><p><strong>⚠️ Products loaded successfully!</strong> Please scroll down and click <strong>"Save Changes"</strong> to persist these products.</p></div>').insertBefore('#products-list');
+            jQuery('<div id="save-products-reminder" class="snn-lemonsqueezy-save-reminder"><p><strong>⚠️ Products loaded successfully!</strong> Please scroll down and click <strong>"Save Changes"</strong> to persist these products.</p></div>').insertBefore('#products-list');
 
             var savedProductRoles = <?php echo json_encode($product_roles); ?>;
             var savedProductAutoCreate = <?php echo json_encode(isset($settings['product_auto_create']) ? $settings['product_auto_create'] : array()); ?>;
@@ -1447,7 +1558,7 @@ class Gumroad_API_WordPress {
                     (autoCreateEnabled ? 'checked' : '') + ' style="margin: 0;" />' +
                     '</label>';
 
-                var rolesHtml = '<div class="snn-gumroad-product-roles-checkboxes">';
+                var rolesHtml = '<div class="snn-lemonsqueezy-product-roles-checkboxes">';
                 <?php
                 global $wp_roles;
                 foreach ($wp_roles->roles as $role_key => $role_info) {
@@ -1492,7 +1603,7 @@ class Gumroad_API_WordPress {
 
             if (savedProducts && savedProducts.length > 0) {
                 // Products exist in database, display them immediately
-                gumroadProducts = savedProducts;
+                lemonsqueezyProducts = savedProducts;
                 displayProducts(savedProducts);
                 $('#products-notice').hide();
                 $('#products-list').show();
@@ -1500,7 +1611,7 @@ class Gumroad_API_WordPress {
                 // No products saved, check if token exists to show helpful message
                 var token = $('#access_token').val();
                 if (token && token.length > 0) {
-                    $('#products-notice').html('<p><strong>👉 Products not loaded yet.</strong></p><p>Scroll up to the "API Connection" section and click <strong>"Test & Fetch Products"</strong> to load your Gumroad products.</p>');
+                    $('#products-notice').html('<p><strong>👉 Products not loaded yet.</strong></p><p>Scroll up to the "API Connection" section and click <strong>"Test & Fetch Products"</strong> to load your LemonSqueezy products.</p>');
                 }
             }
 
@@ -1590,41 +1701,44 @@ class Gumroad_API_WordPress {
      * Test API connection
      */
     public function test_api_connection() {
-        check_ajax_referer('gumroad_test_api', 'nonce');
-        
+        check_ajax_referer('lemonsqueezy_test_api', 'nonce');
+
         if (!current_user_can('manage_options')) {
             wp_send_json_error(array('message' => 'Unauthorized'));
         }
-        
+
         $token = isset($_POST['token']) ? sanitize_text_field($_POST['token']) : '';
-        
+
         if (empty($token)) {
-            wp_send_json_error(array('message' => 'Access token is required'));
+            wp_send_json_error(array('message' => 'API key is required'));
         }
-        
-        $response = wp_remote_get('https://api.gumroad.com/v2/user?access_token=' . $token);
-        
+
+        $response = wp_remote_get('https://api.lemonsqueezy.com/v1/users/me', array(
+            'headers' => $this->get_api_headers($token)
+        ));
+
         if (is_wp_error($response)) {
             wp_send_json_error(array('message' => 'Connection failed: ' . $response->get_error_message()));
         }
-        
+
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
-        
-        if (isset($data['success']) && $data['success']) {
-            $user_name = isset($data['user']['name']) ? $data['user']['name'] : 'Unknown';
-            wp_send_json_success(array('message' => 'Connected successfully! User: ' . $user_name));
+
+        // Parse JSON:API response
+        $user = $this->parse_lemonsqueezy_user($data);
+        if ($user && !empty($user['name'])) {
+            wp_send_json_success(array('message' => 'Connected successfully! User: ' . $user['name']));
         } else {
-            $error_message = isset($data['message']) ? $data['message'] : 'Unknown error';
+            $error_message = $this->get_api_error_message($data);
             wp_send_json_error(array('message' => 'API Error: ' . $error_message));
         }
     }
     
     /**
-     * Fetch products from Gumroad
+     * Fetch products from LemonSqueezy
      */
     public function fetch_products() {
-        check_ajax_referer('gumroad_fetch_products', 'nonce');
+        check_ajax_referer('lemonsqueezy_fetch_products', 'nonce');
 
         if (!current_user_can('manage_options')) {
             wp_send_json_error(array('message' => 'Unauthorized'));
@@ -1633,10 +1747,12 @@ class Gumroad_API_WordPress {
         $token = isset($_POST['token']) ? sanitize_text_field($_POST['token']) : '';
 
         if (empty($token)) {
-            wp_send_json_error(array('message' => 'Access token is required'));
+            wp_send_json_error(array('message' => 'API key is required'));
         }
 
-        $response = wp_remote_get('https://api.gumroad.com/v2/products?access_token=' . $token);
+        $response = wp_remote_get('https://api.lemonsqueezy.com/v1/products', array(
+            'headers' => $this->get_api_headers($token)
+        ));
 
         if (is_wp_error($response)) {
             wp_send_json_error(array('message' => 'Failed to fetch products: ' . $response->get_error_message()));
@@ -1645,18 +1761,12 @@ class Gumroad_API_WordPress {
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
 
-        if (isset($data['success']) && $data['success'] && isset($data['products'])) {
-            $products = array();
-            foreach ($data['products'] as $product) {
-                $products[] = array(
-                    'id' => $product['id'],
-                    'name' => $product['name'],
-                    'published' => $product['published']
-                );
-            }
+        // Parse JSON:API response
+        $products = $this->parse_lemonsqueezy_products($data);
+        if (!empty($products)) {
             wp_send_json_success(array('products' => $products));
         } else {
-            $error_message = isset($data['message']) ? $data['message'] : 'Unknown error';
+            $error_message = $this->get_api_error_message($data);
             wp_send_json_error(array('message' => 'API Error: ' . $error_message));
         }
     }
@@ -1666,7 +1776,7 @@ class Gumroad_API_WordPress {
      */
     public function logs_page() {
         // Handle form submission for log limit
-        if (isset($_POST['gumroad_log_settings_nonce']) && wp_verify_nonce($_POST['gumroad_log_settings_nonce'], 'gumroad_save_log_settings')) {
+        if (isset($_POST['lemonsqueezy_log_settings_nonce']) && wp_verify_nonce($_POST['lemonsqueezy_log_settings_nonce'], 'lemonsqueezy_save_log_settings')) {
             $settings = get_option($this->option_name);
             $settings['log_limit'] = isset($_POST['log_limit']) ? intval($_POST['log_limit']) : 500;
             update_option($this->option_name, $settings);
@@ -1687,10 +1797,10 @@ class Gumroad_API_WordPress {
             <h1><?php _e('API Logs', 'snn'); ?></h1>
             
             <!-- Log Settings Section -->
-            <div class="snn-gumroad-section">
+            <div class="snn-lemonsqueezy-section">
                 <h2><?php _e('Log Settings', 'snn'); ?></h2>
                 <form method="post" action="">
-                    <?php wp_nonce_field('gumroad_save_log_settings', 'gumroad_log_settings_nonce'); ?>
+                    <?php wp_nonce_field('lemonsqueezy_save_log_settings', 'lemonsqueezy_log_settings_nonce'); ?>
                     <table class="form-table">
                         <tr>
                             <th scope="row"><label for="log_limit"><?php _e('Log Limit', 'snn'); ?></label></th>
@@ -1714,15 +1824,15 @@ class Gumroad_API_WordPress {
             <?php else: ?>
                 <div id="logs-container">
                     <?php foreach ($current_logs as $index => $log): ?>
-                        <div class="snn-gumroad-log-entry">
-                            <div class="snn-gumroad-log-header" onclick="toggleLog(<?php echo $index; ?>)">
+                        <div class="snn-lemonsqueezy-log-entry">
+                            <div class="snn-lemonsqueezy-log-header" onclick="toggleLog(<?php echo $index; ?>)">
                                 <div>
                                     <strong><?php echo esc_html($log['type']); ?></strong>
-                                    <span class="snn-gumroad-log-timestamp"><?php echo esc_html($log['timestamp']); ?></span>
+                                    <span class="snn-lemonsqueezy-log-timestamp"><?php echo esc_html($log['timestamp']); ?></span>
                                 </div>
                                 <span class="dashicons dashicons-arrow-down-alt2" id="icon-<?php echo $index; ?>"></span>
                             </div>
-                            <div class="snn-gumroad-log-details" id="log-<?php echo $index; ?>">
+                            <div class="snn-lemonsqueezy-log-details" id="log-<?php echo $index; ?>">
                                 <pre><?php echo esc_html(print_r($log['data'], true)); ?></pre>
                             </div>
                         </div>
@@ -1730,7 +1840,7 @@ class Gumroad_API_WordPress {
                 </div>
                 
                 <?php if ($total_pages > 1): ?>
-                    <div class="snn-gumroad-pagination">
+                    <div class="snn-lemonsqueezy-pagination">
                         <div class="tablenav-pages">
                             <?php
                             echo paginate_links(array(
@@ -1768,8 +1878,8 @@ class Gumroad_API_WordPress {
                 url: ajaxurl,
                 type: 'POST',
                 data: {
-                    action: 'gumroad_clear_logs',
-                    nonce: '<?php echo wp_create_nonce('gumroad_clear_logs'); ?>'
+                    action: 'lemonsqueezy_clear_logs',
+                    nonce: '<?php echo wp_create_nonce('lemonsqueezy_clear_logs'); ?>'
                 },
                 success: function(response) {
                     if (response.success) {
@@ -1786,7 +1896,7 @@ class Gumroad_API_WordPress {
      * Clear logs
      */
     public function clear_logs() {
-        check_ajax_referer('gumroad_clear_logs', 'nonce');
+        check_ajax_referer('lemonsqueezy_clear_logs', 'nonce');
         
         if (!current_user_can('manage_options')) {
             wp_send_json_error();
@@ -1801,18 +1911,18 @@ class Gumroad_API_WordPress {
      */
     public function add_plugin_row_meta($links, $file) {
         if (plugin_basename(__FILE__) === $file) {
-            $uninstall_url = admin_url('admin.php?page=gumroad-api-uninstall');
+            $uninstall_url = admin_url('admin.php?page=lemonsqueezy-api-uninstall');
             $links[] = '<a href="' . esc_url($uninstall_url) . '" style="color: #d63638; font-weight: bold;">' . __('Uninstall', 'snn') . '</a>';
         }
         return $links;
     }
     
     /**
-     * Users page - Display all users created by Gumroad API
+     * Users page - Display all users created by LemonSqueezy API
      */
     public function users_page() {
         // Handle form submission for per page setting
-        if (isset($_POST['gumroad_user_list_settings_nonce']) && wp_verify_nonce($_POST['gumroad_user_list_settings_nonce'], 'gumroad_save_user_list_settings')) {
+        if (isset($_POST['lemonsqueezy_user_list_settings_nonce']) && wp_verify_nonce($_POST['lemonsqueezy_user_list_settings_nonce'], 'lemonsqueezy_save_user_list_settings')) {
             $settings = get_option($this->option_name);
             $settings['user_list_per_page'] = isset($_POST['user_list_per_page']) ? max(1, intval($_POST['user_list_per_page'])) : 20;
             update_option($this->option_name, $settings);
@@ -1833,7 +1943,7 @@ class Gumroad_API_WordPress {
         
         // Build query args
         $args = array(
-            'meta_key' => 'gumroad_sale_id',
+            'meta_key' => 'lemonsqueezy_sale_id',
             'meta_compare' => 'EXISTS',
             'number' => $per_page,
             'paged' => $page,
@@ -1846,7 +1956,7 @@ class Gumroad_API_WordPress {
         
         if (!empty($search_sale_id)) {
             $meta_query[] = array(
-                'key' => 'gumroad_sale_id',
+                'key' => 'lemonsqueezy_sale_id',
                 'value' => $search_sale_id,
                 'compare' => 'LIKE'
             );
@@ -1854,7 +1964,7 @@ class Gumroad_API_WordPress {
         
         if (!empty($search_product)) {
             $meta_query[] = array(
-                'key' => 'gumroad_product_name',
+                'key' => 'lemonsqueezy_product_name',
                 'value' => $search_product,
                 'compare' => 'LIKE'
             );
@@ -1862,7 +1972,7 @@ class Gumroad_API_WordPress {
         
         if (!empty($filter_date_from)) {
             $meta_query[] = array(
-                'key' => 'gumroad_created_date',
+                'key' => 'lemonsqueezy_created_date',
                 'value' => $filter_date_from . ' 00:00:00',
                 'compare' => '>=',
                 'type' => 'DATETIME'
@@ -1871,7 +1981,7 @@ class Gumroad_API_WordPress {
         
         if (!empty($filter_date_to)) {
             $meta_query[] = array(
-                'key' => 'gumroad_created_date',
+                'key' => 'lemonsqueezy_created_date',
                 'value' => $filter_date_to . ' 23:59:59',
                 'compare' => '<=',
                 'type' => 'DATETIME'
@@ -1898,15 +2008,15 @@ class Gumroad_API_WordPress {
         
         ?>
         <div class="wrap">
-            <h1><?php _e('Gumroad Users', 'snn'); ?></h1>
+            <h1><?php _e('LemonSqueezy Users', 'snn'); ?></h1>
             
             <!-- Search & Filter Section -->
-            <div class="snn-gumroad-section">
+            <div class="snn-lemonsqueezy-section">
                 <h2><?php _e('Search & Filter', 'snn'); ?></h2>
                 <form method="get" action="">
                     <input type="hidden" name="page" value="gumroad-api-users" />
                     
-                    <div class="snn-gumroad-search-filters">
+                    <div class="snn-lemonsqueezy-search-filters">
                         <div>
                             <label for="search_email"><strong><?php _e('Email', 'snn'); ?></strong></label>
                             <input type="text" name="search_email" id="search_email" value="<?php echo esc_attr($search_email); ?>" class="regular-text" placeholder="<?php _e('Search by email...', 'snn'); ?>" />
@@ -1947,31 +2057,31 @@ class Gumroad_API_WordPress {
                         </div>
                     </div>
                     
-                    <div class="snn-gumroad-search-actions">
+                    <div class="snn-lemonsqueezy-search-actions">
                         <button type="submit" class="button button-primary"><?php _e('Apply Filters', 'snn'); ?></button>
-                        <a href="<?php echo admin_url('admin.php?page=gumroad-api-users'); ?>" class="button"><?php _e('Clear Filters', 'snn'); ?></a>
-                        <span class="snn-gumroad-search-total"><?php printf(__('Total: %d users', 'snn'), $total_users); ?></span>
+                        <a href="<?php echo admin_url('admin.php?page=lemonsqueezy-api-users'); ?>" class="button"><?php _e('Clear Filters', 'snn'); ?></a>
+                        <span class="snn-lemonsqueezy-search-total"><?php printf(__('Total: %d users', 'snn'), $total_users); ?></span>
                     </div>
                 </form>
             </div>
             
             <?php if (empty($users)): ?>
-                <div class="snn-gumroad-no-results">
-                    <p><?php _e('No users found. Users created through Gumroad purchases will appear here.', 'snn'); ?></p>
+                <div class="snn-lemonsqueezy-no-results">
+                    <p><?php _e('No users found. Users created through LemonSqueezy purchases will appear here.', 'snn'); ?></p>
                 </div>
             <?php else: ?>
                 <div id="users-container">
                     <?php foreach ($users as $index => $user): 
-                        $sale_id = get_user_meta($user->ID, 'gumroad_sale_id', true);
-                        $product_name = get_user_meta($user->ID, 'gumroad_product_name', true);
-                        $product_id = get_user_meta($user->ID, 'gumroad_product_id', true);
-                        $created_date = get_user_meta($user->ID, 'gumroad_created_date', true);
-                        $email_sent = get_user_meta($user->ID, 'gumroad_email_sent', true);
-                        $email_sent_date = get_user_meta($user->ID, 'gumroad_email_sent_date', true);
-                        $sale_data = get_user_meta($user->ID, 'gumroad_sale_data', true);
-                        $assigned_roles = get_user_meta($user->ID, 'gumroad_assigned_roles', true);
-                        $last_purchase_date = get_user_meta($user->ID, 'gumroad_last_purchase_date', true);
-                        $purchase_history = get_user_meta($user->ID, 'gumroad_purchase_history', true);
+                        $sale_id = get_user_meta($user->ID, 'lemonsqueezy_sale_id', true);
+                        $product_name = get_user_meta($user->ID, 'lemonsqueezy_product_name', true);
+                        $product_id = get_user_meta($user->ID, 'lemonsqueezy_product_id', true);
+                        $created_date = get_user_meta($user->ID, 'lemonsqueezy_created_date', true);
+                        $email_sent = get_user_meta($user->ID, 'lemonsqueezy_email_sent', true);
+                        $email_sent_date = get_user_meta($user->ID, 'lemonsqueezy_email_sent_date', true);
+                        $sale_data = get_user_meta($user->ID, 'lemonsqueezy_sale_data', true);
+                        $assigned_roles = get_user_meta($user->ID, 'lemonsqueezy_assigned_roles', true);
+                        $last_purchase_date = get_user_meta($user->ID, 'lemonsqueezy_last_purchase_date', true);
+                        $purchase_history = get_user_meta($user->ID, 'lemonsqueezy_purchase_history', true);
                         
                         $user_data = get_userdata($user->ID);
                         $registered_date = $user_data->user_registered;
@@ -1980,27 +2090,27 @@ class Gumroad_API_WordPress {
                         // Email preview (first 30 chars)
                         $email_preview = strlen($user->user_email) > 30 ? substr($user->user_email, 0, 30) . '...' : $user->user_email;
                     ?>
-                        <div class="snn-gumroad-user-entry">
-                            <div class="snn-gumroad-user-header" onclick="toggleUser(<?php echo $user->ID; ?>)">
-                                <div class="snn-gumroad-user-main-info">
+                        <div class="snn-lemonsqueezy-user-entry">
+                            <div class="snn-lemonsqueezy-user-header" onclick="toggleUser(<?php echo $user->ID; ?>)">
+                                <div class="snn-lemonsqueezy-user-main-info">
                                     <span class="dashicons dashicons-arrow-right" id="icon-<?php echo $user->ID; ?>"></span>
                                     <div>
-                                        <strong class="snn-gumroad-user-username"><?php echo esc_html($user->user_login); ?></strong>
-                                        <span class="snn-gumroad-user-email-preview"><?php echo esc_html($email_preview); ?></span>
+                                        <strong class="snn-lemonsqueezy-user-username"><?php echo esc_html($user->user_login); ?></strong>
+                                        <span class="snn-lemonsqueezy-user-email-preview"><?php echo esc_html($email_preview); ?></span>
                                     </div>
                                 </div>
-                                <div class="snn-gumroad-user-meta-info">
+                                <div class="snn-lemonsqueezy-user-meta-info">
                                     <span><strong><?php _e('Product:', 'snn'); ?></strong> <?php echo esc_html($product_name ? $product_name : 'N/A'); ?></span>
                                     <span><strong><?php _e('Created:', 'snn'); ?></strong> <?php echo esc_html($created_date ? $created_date : $registered_date); ?></span>
                                     <?php if ($email_sent === 'yes'): ?>
-                                        <span class="snn-gumroad-email-status-yes">✓ <?php _e('Email Sent', 'snn'); ?></span>
+                                        <span class="snn-lemonsqueezy-email-status-yes">✓ <?php _e('Email Sent', 'snn'); ?></span>
                                     <?php else: ?>
-                                        <span class="snn-gumroad-email-status-no">✗ <?php _e('No Email', 'snn'); ?></span>
+                                        <span class="snn-lemonsqueezy-email-status-no">✗ <?php _e('No Email', 'snn'); ?></span>
                                     <?php endif; ?>
                                 </div>
                             </div>
-                            <div class="snn-gumroad-user-details" id="user-<?php echo $user->ID; ?>">
-                                <div class="snn-gumroad-user-details-grid">
+                            <div class="snn-lemonsqueezy-user-details" id="user-<?php echo $user->ID; ?>">
+                                <div class="snn-lemonsqueezy-user-details-grid">
                                     <!-- Left Column -->
                                     <div>
                                         <h3><?php _e('User Information', 'snn'); ?></h3>
@@ -2012,7 +2122,7 @@ class Gumroad_API_WordPress {
                                             <tr><th><?php _e('Current Roles', 'snn'); ?></th><td><?php echo esc_html(implode(', ', $roles)); ?></td></tr>
                                         </table>
                                         
-                                        <h3><?php _e('Gumroad Information', 'snn'); ?></h3>
+                                        <h3><?php _e('LemonSqueezy Information', 'snn'); ?></h3>
                                         <table class="widefat">
                                             <tr><th><?php _e('Sale ID', 'snn'); ?></th><td><code><?php echo esc_html($sale_id ? $sale_id : 'N/A'); ?></code></td></tr>
                                             <tr><th><?php _e('Product Name', 'snn'); ?></th><td><?php echo esc_html($product_name ? $product_name : 'N/A'); ?></td></tr>
@@ -2023,7 +2133,7 @@ class Gumroad_API_WordPress {
                                         
                                         <h3><?php _e('Email Status', 'snn'); ?></h3>
                                         <table class="widefat">
-                                            <tr><th><?php _e('Email Sent', 'snn'); ?></th><td><?php echo $email_sent === 'yes' ? '<span class="snn-gumroad-email-status-yes">✓ Yes</span>' : '<span class="snn-gumroad-email-status-no">✗ No</span>'; ?></td></tr>
+                                            <tr><th><?php _e('Email Sent', 'snn'); ?></th><td><?php echo $email_sent === 'yes' ? '<span class="snn-lemonsqueezy-email-status-yes">✓ Yes</span>' : '<span class="snn-lemonsqueezy-email-status-no">✗ No</span>'; ?></td></tr>
                                             <?php if ($email_sent === 'yes'): ?>
                                             <tr><th><?php _e('Email Sent Date', 'snn'); ?></th><td><?php echo esc_html($email_sent_date); ?></td></tr>
                                             <?php endif; ?>
@@ -2036,7 +2146,7 @@ class Gumroad_API_WordPress {
                                         <h3><?php _e('Last Purchase', 'snn'); ?></h3>
                                         <table class="widefat">
                                             <tr><th><?php _e('Date', 'snn'); ?></th><td><?php echo esc_html($last_purchase_date); ?></td></tr>
-                                            <tr><th><?php _e('Product', 'snn'); ?></th><td><?php echo esc_html(get_user_meta($user->ID, 'gumroad_last_product_name', true)); ?></td></tr>
+                                            <tr><th><?php _e('Product', 'snn'); ?></th><td><?php echo esc_html(get_user_meta($user->ID, 'lemonsqueezy_last_product_name', true)); ?></td></tr>
                                         </table>
                                         <?php endif; ?>
                                         
@@ -2045,7 +2155,7 @@ class Gumroad_API_WordPress {
                                             if (is_array($history) && !empty($history)):
                                         ?>
                                         <h3><?php _e('Purchase History', 'snn'); ?></h3>
-                                        <div class="snn-gumroad-purchase-history">
+                                        <div class="snn-lemonsqueezy-purchase-history">
                                             <table class="widefat">
                                                 <thead>
                                                     <tr>
@@ -2068,7 +2178,7 @@ class Gumroad_API_WordPress {
                                         <?php endif; endif; ?>
                                         
                                         <h3><?php _e('Raw Sale Data', 'snn'); ?></h3>
-                                        <div class="snn-gumroad-raw-data">
+                                        <div class="snn-lemonsqueezy-raw-data">
                                             <pre><?php 
                                                 if ($sale_data) {
                                                     $decoded_data = json_decode($sale_data, true);
@@ -2081,7 +2191,7 @@ class Gumroad_API_WordPress {
                                     </div>
                                 </div>
                                 
-                                <div class="snn-gumroad-user-actions">
+                                <div class="snn-lemonsqueezy-user-actions">
                                     <a href="<?php echo admin_url('user-edit.php?user_id=' . $user->ID); ?>" class="button button-primary" target="_blank"><?php _e('Edit User', 'snn'); ?></a>
                                     <a href="mailto:<?php echo esc_attr($user->user_email); ?>" class="button"><?php _e('Send Email', 'snn'); ?></a>
                                 </div>
@@ -2091,7 +2201,7 @@ class Gumroad_API_WordPress {
                 </div>
                 
                 <?php if ($total_pages > 1): ?>
-                    <div class="snn-gumroad-pagination">
+                    <div class="snn-lemonsqueezy-pagination">
                         <div class="tablenav-pages">
                             <?php
                             echo paginate_links(array(
@@ -2109,9 +2219,9 @@ class Gumroad_API_WordPress {
                 <?php endif; ?>
                 
                 <!-- Save Button at Bottom -->
-                <div class="snn-gumroad-section">
-                    <form method="post" action="" class="snn-gumroad-settings-form">
-                        <?php wp_nonce_field('gumroad_save_user_list_settings', 'gumroad_user_list_settings_nonce'); ?>
+                <div class="snn-lemonsqueezy-section">
+                    <form method="post" action="" class="snn-lemonsqueezy-settings-form">
+                        <?php wp_nonce_field('lemonsqueezy_save_user_list_settings', 'lemonsqueezy_user_list_settings_nonce'); ?>
                         <label for="user_list_per_page_bottom"><strong><?php _e('Users per page:', 'snn'); ?></strong></label>
                         <input type="number" name="user_list_per_page" id="user_list_per_page_bottom" value="<?php echo esc_attr($per_page); ?>" class="small-text" min="1" max="100" />
                         <?php submit_button(__('Save', 'snn'), 'primary', 'submit', false); ?>
@@ -2147,9 +2257,9 @@ class Gumroad_API_WordPress {
         
         ?>
         <div class="wrap">
-            <h1><?php _e('Uninstall Gumroad API Plugin', 'snn'); ?></h1>
+            <h1><?php _e('Uninstall LemonSqueezy API Plugin', 'snn'); ?></h1>
             
-            <div class="snn-gumroad-section">
+            <div class="snn-lemonsqueezy-section">
                 <h2 style="color: #d63638;"><?php _e('⚠️ WARNING: Complete Data Removal', 'snn'); ?></h2>
                 <div style="background: #fee; border-left: 4px solid #d63638; padding: 15px; margin: 20px 0;">
                     <p><strong><?php _e('This action will PERMANENTLY DELETE all plugin data from your WordPress database!', 'snn'); ?></strong></p>
@@ -2167,29 +2277,29 @@ class Gumroad_API_WordPress {
                         <li><strong><?php _e('Scheduled Cron Jobs:', 'snn'); ?></strong> gumroad_api_check_sales</li>
                     </ul>
                     
-                    <h4><?php _e('User Metadata (from Gumroad users)', 'snn'); ?></h4>
+                    <h4><?php _e('User Metadata (from LemonSqueezy users)', 'snn'); ?></h4>
                     <ul style="margin: 10px 0; padding-left: 20px;">
                         <li><strong><?php _e('Total affected users:', 'snn'); ?></strong> <?php echo number_format($data_stats['gumroad_users_count']); ?></li>
-                        <li><?php _e('gumroad_sale_id - Original sale ID', 'snn'); ?></li>
-                        <li><?php _e('gumroad_product_name - Purchased product name', 'snn'); ?></li>
-                        <li><?php _e('gumroad_product_id - Product ID', 'snn'); ?></li>
-                        <li><?php _e('gumroad_created_date - User creation date', 'snn'); ?></li>
-                        <li><?php _e('gumroad_sale_data - Raw sale data JSON', 'snn'); ?></li>
-                        <li><?php _e('gumroad_assigned_roles - Roles assigned by plugin', 'snn'); ?></li>
-                        <li><?php _e('gumroad_email_sent - Email sent status', 'snn'); ?></li>
-                        <li><?php _e('gumroad_email_sent_date - Email sent timestamp', 'snn'); ?></li>
-                        <li><?php _e('gumroad_last_purchase_date - Last purchase date', 'snn'); ?></li>
-                        <li><?php _e('gumroad_last_product_name - Last purchased product', 'snn'); ?></li>
-                        <li><?php _e('gumroad_last_product_id - Last product ID', 'snn'); ?></li>
-                        <li><?php _e('gumroad_last_sale_id - Last sale ID', 'snn'); ?></li>
-                        <li><?php _e('gumroad_purchase_history - Purchase history JSON', 'snn'); ?></li>
-                        <li><?php _e('gumroad_refunded - Refund status', 'snn'); ?></li>
-                        <li><?php _e('gumroad_refunded_date - Refund date', 'snn'); ?></li>
-                        <li><?php _e('gumroad_subscription_status - Subscription status', 'snn'); ?></li>
-                        <li><?php _e('gumroad_subscription_ended_date - Subscription end date', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_sale_id - Original sale ID', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_product_name - Purchased product name', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_product_id - Product ID', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_created_date - User creation date', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_sale_data - Raw sale data JSON', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_assigned_roles - Roles assigned by plugin', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_email_sent - Email sent status', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_email_sent_date - Email sent timestamp', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_last_purchase_date - Last purchase date', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_last_product_name - Last purchased product', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_last_product_id - Last product ID', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_last_sale_id - Last sale ID', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_purchase_history - Purchase history JSON', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_refunded - Refund status', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_refunded_date - Refund date', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_subscription_status - Subscription status', 'snn'); ?></li>
+                        <li><?php _e('lemonsqueezy_subscription_ended_date - Subscription end date', 'snn'); ?></li>
                     </ul>
                     
-                    <p style="margin-top: 15px;"><strong><?php _e('Note:', 'snn'); ?></strong> <?php _e('WordPress user accounts will NOT be deleted, only the Gumroad metadata will be removed.', 'snn'); ?></p>
+                    <p style="margin-top: 15px;"><strong><?php _e('Note:', 'snn'); ?></strong> <?php _e('WordPress user accounts will NOT be deleted, only the LemonSqueezy metadata will be removed.', 'snn'); ?></p>
                 </div>
                 
                 <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0;">
@@ -2234,7 +2344,7 @@ class Gumroad_API_WordPress {
                 return;
             }
             
-            if (!confirm('<?php _e('FINAL WARNING: This will permanently delete all Gumroad API plugin data and deactivate the plugin. This action cannot be undone!\\n\\nAre you absolutely sure you want to proceed?', 'snn'); ?>')) {
+            if (!confirm('<?php _e('FINAL WARNING: This will permanently delete all LemonSqueezy API plugin data and deactivate the plugin. This action cannot be undone!\\n\\nAre you absolutely sure you want to proceed?', 'snn'); ?>')) {
                 return;
             }
             
@@ -2245,9 +2355,9 @@ class Gumroad_API_WordPress {
                 url: ajaxurl,
                 type: 'POST',
                 data: {
-                    action: 'gumroad_uninstall_plugin',
+                    action: 'lemonsqueezy_uninstall_plugin',
                     confirmation: confirmText,
-                    nonce: '<?php echo wp_create_nonce('gumroad_uninstall'); ?>'
+                    nonce: '<?php echo wp_create_nonce('lemonsqueezy_uninstall'); ?>'
                 },
                 success: function(response) {
                     if (response.success) {
@@ -2288,9 +2398,9 @@ class Gumroad_API_WordPress {
         $processed_sales = get_option('gumroad_processed_sales', array());
         $stats['processed_sales_count'] = count($processed_sales);
         
-        // Count users with Gumroad metadata
+        // Count users with LemonSqueezy metadata
         $user_query = new WP_User_Query(array(
-            'meta_key' => 'gumroad_sale_id',
+            'meta_key' => 'lemonsqueezy_sale_id',
             'meta_compare' => 'EXISTS',
             'fields' => 'ID'
         ));
@@ -2303,7 +2413,7 @@ class Gumroad_API_WordPress {
      * AJAX handler for plugin uninstall
      */
     public function uninstall_plugin_data() {
-        check_ajax_referer('gumroad_uninstall', 'nonce');
+        check_ajax_referer('lemonsqueezy_uninstall', 'nonce');
         
         if (!current_user_can('manage_options')) {
             wp_send_json_error(array('message' => __('You do not have permission to perform this action.', 'snn')));
@@ -2359,25 +2469,25 @@ class Gumroad_API_WordPress {
             $deleted_data[] = __('Cron Jobs', 'snn');
         }
         
-        // 3. Delete all user meta data with Gumroad prefix
+        // 3. Delete all user meta data with LemonSqueezy prefix
         $gumroad_meta_keys = array(
-            'gumroad_sale_id',
-            'gumroad_product_name',
-            'gumroad_product_id',
-            'gumroad_created_date',
-            'gumroad_sale_data',
-            'gumroad_assigned_roles',
-            'gumroad_email_sent',
-            'gumroad_email_sent_date',
-            'gumroad_last_purchase_date',
-            'gumroad_last_product_name',
-            'gumroad_last_product_id',
-            'gumroad_last_sale_id',
-            'gumroad_purchase_history',
-            'gumroad_refunded',
-            'gumroad_refunded_date',
-            'gumroad_subscription_status',
-            'gumroad_subscription_ended_date'
+            'lemonsqueezy_sale_id',
+            'lemonsqueezy_product_name',
+            'lemonsqueezy_product_id',
+            'lemonsqueezy_created_date',
+            'lemonsqueezy_sale_data',
+            'lemonsqueezy_assigned_roles',
+            'lemonsqueezy_email_sent',
+            'lemonsqueezy_email_sent_date',
+            'lemonsqueezy_last_purchase_date',
+            'lemonsqueezy_last_product_name',
+            'lemonsqueezy_last_product_id',
+            'lemonsqueezy_last_sale_id',
+            'lemonsqueezy_purchase_history',
+            'lemonsqueezy_refunded',
+            'lemonsqueezy_refunded_date',
+            'lemonsqueezy_subscription_status',
+            'lemonsqueezy_subscription_ended_date'
         );
         
         $total_meta_deleted = 0;
@@ -2395,8 +2505,8 @@ class Gumroad_API_WordPress {
             $deleted_data[] = sprintf(__('%d User Metadata Entries', 'snn'), $total_meta_deleted);
         }
         
-        // 4. Clean up any remaining Gumroad-related options (catch-all)
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'gumroad_%'");
+        // 4. Clean up any remaining LemonSqueezy-related options (catch-all)
+        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'lemonsqueezy_%'");
 
         return $deleted_data;
     }
@@ -2443,20 +2553,20 @@ class Gumroad_API_WordPress {
             return;
         }
 
-        // Check if user has Gumroad metadata (meaning they were created by this plugin)
-        $gumroad_sale_id = get_user_meta($current_user->ID, 'gumroad_sale_id', true);
-        if (empty($gumroad_sale_id)) {
-            // User was not created by Gumroad, don't redirect
+        // Check if user has LemonSqueezy metadata (meaning they were created by this plugin)
+        $lemonsqueezy_sale_id = get_user_meta($current_user->ID, 'lemonsqueezy_sale_id', true);
+        if (empty($lemonsqueezy_sale_id)) {
+            // User was not created by LemonSqueezy, don't redirect
             return;
         }
 
         // Check subscription status
-        $subscription_status = get_user_meta($current_user->ID, 'gumroad_subscription_status', true);
+        $subscription_status = get_user_meta($current_user->ID, 'lemonsqueezy_subscription_status', true);
 
         // If subscription is cancelled or ended, redirect to renewal page
         if ($subscription_status === 'cancelled') {
             // Check if user lost their roles (which means subscription was processed as ended)
-            $assigned_roles = get_user_meta($current_user->ID, 'gumroad_assigned_roles', true);
+            $assigned_roles = get_user_meta($current_user->ID, 'lemonsqueezy_assigned_roles', true);
             if ($assigned_roles) {
                 $roles = json_decode($assigned_roles, true);
                 if (is_array($roles) && !empty($roles)) {
@@ -2472,7 +2582,7 @@ class Gumroad_API_WordPress {
                     // If user doesn't have any of their assigned roles, subscription has ended
                     if (!$has_any_role) {
                         // Get product information for logging
-                        $product_name = get_user_meta($current_user->ID, 'gumroad_product_name', true);
+                        $product_name = get_user_meta($current_user->ID, 'lemonsqueezy_product_name', true);
 
                         $this->log_activity('Subscription renewal redirect', array(
                             'user_id' => $current_user->ID,
@@ -2493,4 +2603,4 @@ class Gumroad_API_WordPress {
 }
 
 // Initialize the plugin
-new Gumroad_API_WordPress();
+new LemonSqueezy_API_WordPress();
