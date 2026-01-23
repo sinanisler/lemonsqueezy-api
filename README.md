@@ -21,6 +21,4 @@ Connect your WordPress site with LemonSqueezy API to automatically create user a
 - ✅ User list with filtering/search
 - ✅ Product-specific configuration
 - ✅ Subscription renewal redirect functionality
- 
- 
- 
+  
