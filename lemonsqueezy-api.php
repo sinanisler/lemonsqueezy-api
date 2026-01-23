@@ -297,6 +297,7 @@ class LemonSqueezy_API_WordPress {
 
     /**
      * Parse LemonSqueezy JSON:API orders response
+     * Just returns raw data, no parsing bullshit
      */
     private function parse_lemonsqueezy_orders($json_data) {
         $orders = array();
@@ -305,23 +306,8 @@ class LemonSqueezy_API_WordPress {
         }
 
         foreach ($json_data['data'] as $item) {
-            if (!isset($item['type']) || $item['type'] !== 'orders') {
-                continue;
-            }
-
-            $attrs = isset($item['attributes']) ? $item['attributes'] : array();
-            $orders[] = array(
-                'id' => isset($item['id']) ? $item['id'] : '',
-                'email' => isset($attrs['user_email']) ? $attrs['user_email'] : (isset($attrs['customer_email']) ? $attrs['customer_email'] : ''),
-                'product_name' => isset($attrs['product_name']) ? $attrs['product_name'] : '',
-                'product_id' => isset($attrs['product_id']) ? strval($attrs['product_id']) : '',
-                'refunded' => isset($attrs['refunded']) ? $attrs['refunded'] : false,
-                'chargedback' => false, // LemonSqueezy may not have this
-                'partially_refunded' => false, // Check if available
-                'cancelled' => isset($attrs['status']) && $attrs['status'] === 'cancelled',
-                'ended' => false, // For subscriptions
-                'subscription_id' => $this->extract_subscription_id($item)
-            );
+            // Just return the entire raw item, fuck parsing
+            $orders[] = $item;
         }
         return $orders;
     }
@@ -422,8 +408,16 @@ class LemonSqueezy_API_WordPress {
             return;
         }
 
-        // Parse orders using helper function
+        // Parse orders (just gets raw items)
         $orders = $this->parse_lemonsqueezy_orders($data);
+        
+        // Log first order completely raw
+        if (!empty($orders)) {
+            $this->log_activity('RAW ORDER FROM API', array(
+                'raw_order' => $orders[0],
+                'IMPORTANT' => 'This is the COMPLETE unmodified order data from LemonSqueezy'
+            ));
+        }
 
         if (!empty($orders)) {
             $processed_sales = get_option('lemonsqueezy_processed_sales', array());
@@ -513,35 +507,31 @@ class LemonSqueezy_API_WordPress {
      * Process a sale and create/update user
      */
     private function process_sale($sale_data) {
-        $email = isset($sale_data['email']) ? sanitize_email($sale_data['email']) : '';
-        $product_name = isset($sale_data['product_name']) ? sanitize_text_field($sale_data['product_name']) : '';
-        $product_id = isset($sale_data['product_id']) ? sanitize_text_field($sale_data['product_id']) : '';
-
-        // Always log the product details for debugging
-        $log_product_name = !empty($product_name) ? $product_name : 'Unknown Product';
-        $log_product_id = !empty($product_id) ? $product_id : 'No ID';
+        // Log the complete raw sale data
+        $this->log_activity('Processing sale - RAW DATA', array(
+            'raw_sale' => $sale_data
+        ));
+        
+        // Extract from attributes if exists
+        $attrs = isset($sale_data['attributes']) ? $sale_data['attributes'] : $sale_data;
+        
+        $email = isset($attrs['user_email']) ? sanitize_email($attrs['user_email']) : '';
+        $product_name = isset($attrs['first_order_item']['product_name']) ? sanitize_text_field($attrs['first_order_item']['product_name']) : '';
+        $product_id = isset($attrs['first_order_item']['product_id']) ? sanitize_text_field($attrs['first_order_item']['product_id']) : '';
+        $sale_id = isset($sale_data['id']) ? $sale_data['id'] : '';
 
         if (empty($email)) {
             return new WP_Error('invalid_email', 'Email address is required');
         }
 
-        $settings = get_option($this->option_name);
-        $product_auto_create = isset($settings['product_auto_create']) ? $settings['product_auto_create'] : array();
-
-        // Check if product ID exists
         if (empty($product_id)) {
-            $this->log_activity('User creation skipped', array(
-                'reason' => 'Product ID is empty or missing from API response',
+            $this->log_activity('MISSING PRODUCT ID', array(
                 'email' => $email,
-                'product_name' => $log_product_name,
-                'product_id' => $log_product_id,
-                'sale_data' => $sale_data
+                'raw_sale' => $sale_data,
+                'extracted_attrs' => $attrs
             ));
-            return new WP_Error('missing_product_id', 'Product ID is missing from sale data');
+            return new WP_Error('missing_product_id', 'Product ID is missing');
         }
-
-        // Normalize product ID to string for comparison (API might return int or string)
-        $product_id_normalized = strval($product_id);
         
         // Check if auto user creation is enabled for THIS specific product
         // Try both original and normalized product IDs to handle type mismatches
