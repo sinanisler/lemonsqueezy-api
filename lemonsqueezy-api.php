@@ -507,17 +507,12 @@ class LemonSqueezy_API_WordPress {
      * Process a sale and create/update user
      */
     private function process_sale($sale_data) {
-        // Log the complete raw sale data
-        $this->log_activity('Processing sale - RAW DATA', array(
-            'raw_sale' => $sale_data
-        ));
-        
         // Extract from attributes if exists
         $attrs = isset($sale_data['attributes']) ? $sale_data['attributes'] : $sale_data;
         
         $email = isset($attrs['user_email']) ? sanitize_email($attrs['user_email']) : '';
         $product_name = isset($attrs['first_order_item']['product_name']) ? sanitize_text_field($attrs['first_order_item']['product_name']) : '';
-        $product_id = isset($attrs['first_order_item']['product_id']) ? sanitize_text_field($attrs['first_order_item']['product_id']) : '';
+        $product_id = isset($attrs['first_order_item']['product_id']) ? strval($attrs['first_order_item']['product_id']) : '';
         $sale_id = isset($sale_data['id']) ? $sale_data['id'] : '';
 
         if (empty($email)) {
@@ -527,10 +522,26 @@ class LemonSqueezy_API_WordPress {
         if (empty($product_id)) {
             $this->log_activity('MISSING PRODUCT ID', array(
                 'email' => $email,
-                'raw_sale' => $sale_data,
-                'extracted_attrs' => $attrs
+                'raw_sale' => $sale_data
             ));
             return new WP_Error('missing_product_id', 'Product ID is missing');
+        }
+
+        $settings = get_option($this->option_name);
+        $product_auto_create = isset($settings['product_auto_create']) ? $settings['product_auto_create'] : array();
+        
+        // Check if auto user creation is enabled for THIS product
+        if (!isset($product_auto_create[$product_id]) || !$product_auto_create[$product_id]) {
+            $this->log_activity('User creation skipped', array(
+                'reason' => 'Auto create users is not enabled for this product',
+                'email' => $email,
+                'product_name' => $product_name,
+                'product_id' => $product_id,
+                'sale_id' => $sale_id,
+                'enabled_products' => array_keys(array_filter($product_auto_create)),
+                'note' => 'Go to Settings and enable Auto Create Users checkbox for product ID: ' . $product_id
+            ));
+            return new WP_Error('auto_create_disabled', 'Auto create users not enabled for this product');
         }
         
         // Check if auto user creation is enabled for THIS specific product
@@ -588,8 +599,8 @@ class LemonSqueezy_API_WordPress {
             $this->log_activity('User creation skipped', array(
                 'reason' => 'No roles configured for this product',
                 'email' => $email,
-                'product_name' => $log_product_name,
-                'product_id' => $log_product_id
+                'product_name' => $product_name,
+                'product_id' => $product_id
             ));
             return new WP_Error('no_roles_configured', 'No roles configured for this product');
         }
@@ -621,7 +632,6 @@ class LemonSqueezy_API_WordPress {
             }
 
             // Store LemonSqueezy metadata
-            $sale_id = isset($sale_data['id']) ? $sale_data['id'] : '';
             update_user_meta($user_id, 'lemonsqueezy_sale_id', $sale_id);
             update_user_meta($user_id, 'lemonsqueezy_product_name', $product_name);
             update_user_meta($user_id, 'lemonsqueezy_product_id', $product_id);
