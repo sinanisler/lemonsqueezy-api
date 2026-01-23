@@ -517,6 +517,10 @@ class LemonSqueezy_API_WordPress {
         $product_name = isset($sale_data['product_name']) ? sanitize_text_field($sale_data['product_name']) : '';
         $product_id = isset($sale_data['product_id']) ? sanitize_text_field($sale_data['product_id']) : '';
 
+        // Always log the product details for debugging
+        $log_product_name = !empty($product_name) ? $product_name : 'Unknown Product';
+        $log_product_id = !empty($product_id) ? $product_id : 'No ID';
+
         if (empty($email)) {
             return new WP_Error('invalid_email', 'Email address is required');
         }
@@ -524,13 +528,53 @@ class LemonSqueezy_API_WordPress {
         $settings = get_option($this->option_name);
         $product_auto_create = isset($settings['product_auto_create']) ? $settings['product_auto_create'] : array();
 
+        // Check if product ID exists
+        if (empty($product_id)) {
+            $this->log_activity('User creation skipped', array(
+                'reason' => 'Product ID is empty or missing from API response',
+                'email' => $email,
+                'product_name' => $log_product_name,
+                'product_id' => $log_product_id,
+                'sale_data' => $sale_data
+            ));
+            return new WP_Error('missing_product_id', 'Product ID is missing from sale data');
+        }
+
+        // Normalize product ID to string for comparison (API might return int or string)
+        $product_id_normalized = strval($product_id);
+        
         // Check if auto user creation is enabled for THIS specific product
-        if (empty($product_id) || !isset($product_auto_create[$product_id]) || !$product_auto_create[$product_id]) {
+        // Try both original and normalized product IDs to handle type mismatches
+        $is_auto_create_enabled = false;
+        if (isset($product_auto_create[$product_id]) && $product_auto_create[$product_id]) {
+            $is_auto_create_enabled = true;
+        } elseif (isset($product_auto_create[$product_id_normalized]) && $product_auto_create[$product_id_normalized]) {
+            $is_auto_create_enabled = true;
+            $product_id = $product_id_normalized; // Use normalized version
+        }
+        
+        if (!$is_auto_create_enabled) {
+            // Get list of enabled products with their details for debugging
+            $enabled_products = array();
+            foreach ($product_auto_create as $pid => $enabled) {
+                if ($enabled) {
+                    $enabled_products[$pid] = array(
+                        'id' => $pid,
+                        'type' => gettype($pid)
+                    );
+                }
+            }
+            
             $this->log_activity('User creation skipped', array(
                 'reason' => 'Auto create users is not enabled for this product',
                 'email' => $email,
-                'product' => $product_name,
-                'product_id' => $product_id
+                'product_name' => $log_product_name,
+                'product_id' => $log_product_id,
+                'product_id_type' => gettype($product_id),
+                'enabled_products' => $enabled_products,
+                'total_enabled_products' => count(array_filter($product_auto_create)),
+                'all_configured_products' => array_keys($product_auto_create),
+                'note' => 'Enable auto-create for this product in Settings > User Management > Product-Specific Configuration'
             ));
             return new WP_Error('auto_create_disabled', 'Automatic user creation is not enabled for this product');
         }
@@ -554,8 +598,8 @@ class LemonSqueezy_API_WordPress {
             $this->log_activity('User creation skipped', array(
                 'reason' => 'No roles configured for this product',
                 'email' => $email,
-                'product' => $product_name,
-                'product_id' => $product_id
+                'product_name' => $log_product_name,
+                'product_id' => $log_product_id
             ));
             return new WP_Error('no_roles_configured', 'No roles configured for this product');
         }
@@ -607,11 +651,13 @@ class LemonSqueezy_API_WordPress {
             $this->log_activity('User created', array(
                 'user_id' => $user_id,
                 'email' => $email,
-                'product' => $product_name,
+                'username' => $username,
+                'product_name' => $product_name,
                 'product_id' => $product_id,
                 'sale_id' => $sale_id,
                 'roles' => $roles,
-                'email_sent' => $email_sent
+                'email_sent' => $email_sent,
+                'first_name' => $first_name
             ));
             
             return $user_id;
@@ -652,10 +698,12 @@ class LemonSqueezy_API_WordPress {
                 $this->log_activity('User roles updated', array(
                     'user_id' => $user->ID,
                     'email' => $email,
-                    'product' => $product_name,
+                    'username' => $user->user_login,
+                    'product_name' => $product_name,
                     'product_id' => $product_id,
                     'sale_id' => $sale_id,
-                    'roles_added' => $roles_added
+                    'roles_added' => $roles_added,
+                    'all_roles' => $user->roles
                 ));
             }
             
@@ -1681,6 +1729,14 @@ class LemonSqueezy_API_WordPress {
                 $settings['product_auto_create'][sanitize_text_field($product_id)] = true;
             }
         }
+        
+        // Log settings save for debugging
+        $this->log_activity('Settings saved', array(
+            'auto_create_enabled_for_products' => array_keys($settings['product_auto_create']),
+            'total_products_with_auto_create' => count($settings['product_auto_create']),
+            'products_with_custom_roles' => array_keys($settings['product_roles']),
+            'default_roles' => $settings['default_roles']
+        ));
 
         // Process products data
         if (isset($post_data['products_data'])) {
