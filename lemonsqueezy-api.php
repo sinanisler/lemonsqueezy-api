@@ -1145,7 +1145,7 @@ class LemonSqueezy_API_WordPress {
         
         // If no users, use processed sales count
         if ($stats['total_sales'] === 0) {
-            $processed_sales = get_option('gumroad_processed_sales', array());
+            $processed_sales = get_option('lemonsqueezy_processed_sales', array());
             $stats['total_sales'] = count($processed_sales);
         }
         
@@ -2271,15 +2271,15 @@ class LemonSqueezy_API_WordPress {
                 <div style="background: #f9f9f9; border: 1px solid #ddd; padding: 20px; margin: 20px 0;">
                     <h4><?php _e('Plugin Settings & Data', 'snn'); ?></h4>
                     <ul style="margin: 10px 0; padding-left: 20px;">
-                        <li><strong><?php _e('Main Plugin Settings:', 'snn'); ?></strong> gumroad_api_settings</li>
+                        <li><strong><?php _e('Main Plugin Settings:', 'snn'); ?></strong> lemonsqueezy_api_settings</li>
                         <li><strong><?php _e('Activity Logs:', 'snn'); ?></strong> <?php echo number_format($data_stats['logs_count']); ?> entries</li>
                         <li><strong><?php _e('Processed Sales List:', 'snn'); ?></strong> <?php echo number_format($data_stats['processed_sales_count']); ?> sale IDs</li>
-                        <li><strong><?php _e('Scheduled Cron Jobs:', 'snn'); ?></strong> gumroad_api_check_sales</li>
+                        <li><strong><?php _e('Scheduled Cron Jobs:', 'snn'); ?></strong> lemonsqueezy_api_check_sales</li>
                     </ul>
                     
                     <h4><?php _e('User Metadata (from LemonSqueezy users)', 'snn'); ?></h4>
                     <ul style="margin: 10px 0; padding-left: 20px;">
-                        <li><strong><?php _e('Total affected users:', 'snn'); ?></strong> <?php echo number_format($data_stats['gumroad_users_count']); ?></li>
+                        <li><strong><?php _e('Total affected users:', 'snn'); ?></strong> <?php echo number_format($data_stats['lemonsqueezy_users_count']); ?></li>
                         <li><?php _e('lemonsqueezy_sale_id - Original sale ID', 'snn'); ?></li>
                         <li><?php _e('lemonsqueezy_product_name - Purchased product name', 'snn'); ?></li>
                         <li><?php _e('lemonsqueezy_product_id - Product ID', 'snn'); ?></li>
@@ -2387,7 +2387,7 @@ class LemonSqueezy_API_WordPress {
         $stats = array(
             'logs_count' => 0,
             'processed_sales_count' => 0,
-            'gumroad_users_count' => 0
+            'lemonsqueezy_users_count' => 0
         );
         
         // Count logs
@@ -2395,7 +2395,7 @@ class LemonSqueezy_API_WordPress {
         $stats['logs_count'] = count($logs);
         
         // Count processed sales
-        $processed_sales = get_option('gumroad_processed_sales', array());
+        $processed_sales = get_option('lemonsqueezy_processed_sales', array());
         $stats['processed_sales_count'] = count($processed_sales);
         
         // Count users with LemonSqueezy metadata
@@ -2404,7 +2404,7 @@ class LemonSqueezy_API_WordPress {
             'meta_compare' => 'EXISTS',
             'fields' => 'ID'
         ));
-        $stats['gumroad_users_count'] = $user_query->get_total();
+        $stats['lemonsqueezy_users_count'] = $user_query->get_total();
         
         return $stats;
     }
@@ -2458,19 +2458,19 @@ class LemonSqueezy_API_WordPress {
             $deleted_data[] = __('Activity Logs', 'snn');
         }
         
-        if (delete_option('gumroad_processed_sales')) {
+        if (delete_option('lemonsqueezy_processed_sales')) {
             $deleted_data[] = __('Processed Sales List', 'snn');
         }
         
         // 2. Remove scheduled cron jobs
-        $timestamp = wp_next_scheduled('gumroad_api_check_sales');
+        $timestamp = wp_next_scheduled('lemonsqueezy_api_check_sales');
         if ($timestamp) {
-            wp_unschedule_event($timestamp, 'gumroad_api_check_sales');
+            wp_unschedule_event($timestamp, 'lemonsqueezy_api_check_sales');
             $deleted_data[] = __('Cron Jobs', 'snn');
         }
         
         // 3. Delete all user meta data with LemonSqueezy prefix
-        $gumroad_meta_keys = array(
+        $lemonsqueezy_meta_keys = array(
             'lemonsqueezy_sale_id',
             'lemonsqueezy_product_name',
             'lemonsqueezy_product_id',
@@ -2491,7 +2491,7 @@ class LemonSqueezy_API_WordPress {
         );
         
         $total_meta_deleted = 0;
-        foreach ($gumroad_meta_keys as $meta_key) {
+        foreach ($lemonsqueezy_meta_keys as $meta_key) {
             $result = $wpdb->query($wpdb->prepare(
                 "DELETE FROM {$wpdb->usermeta} WHERE meta_key = %s",
                 $meta_key
