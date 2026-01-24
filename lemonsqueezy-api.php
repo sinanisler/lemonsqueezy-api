@@ -323,6 +323,49 @@ class LemonSqueezy_API_WordPress {
     }
 
     /**
+     * Fetch subscription data from LemonSqueezy API
+     */
+    private function fetch_subscription($access_token, $subscription_id) {
+        if (empty($subscription_id) || empty($access_token)) {
+            return new WP_Error('invalid_params', 'Access token and subscription ID are required');
+        }
+
+        $response = wp_remote_get("https://api.lemonsqueezy.com/v1/subscriptions/{$subscription_id}", array(
+            'headers' => $this->get_api_headers($access_token)
+        ));
+
+        if (is_wp_error($response)) {
+            $this->log_activity('Subscription fetch error', array(
+                'subscription_id' => $subscription_id,
+                'error' => $response->get_error_message()
+            ));
+            return $response;
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+
+        if (!isset($data['data'])) {
+            $error_msg = $this->get_api_error_message($data);
+            $this->log_activity('Subscription API error', array(
+                'subscription_id' => $subscription_id,
+                'error' => $error_msg,
+                'response' => $data
+            ));
+            return new WP_Error('api_error', $error_msg);
+        }
+
+        // Log raw subscription data for debugging
+        $this->log_activity('Subscription fetched', array(
+            'subscription_id' => $subscription_id,
+            'status' => isset($data['data']['attributes']['status']) ? $data['data']['attributes']['status'] : 'unknown',
+            'raw_data' => $data['data']
+        ));
+
+        return $data['data'];
+    }
+
+    /**
      * Parse LemonSqueezy JSON:API user response
      */
     private function parse_lemonsqueezy_user($json_data) {
@@ -380,12 +423,12 @@ class LemonSqueezy_API_WordPress {
     public function check_recent_sales() {
         $settings = get_option($this->option_name);
         $access_token = isset($settings['access_token']) ? $settings['access_token'] : '';
-        
+
         if (empty($access_token)) {
             $this->log_activity('Cron error', array('error' => 'Access token not set'));
             return;
         }
-        
+
         $sales_limit = isset($settings['sales_limit']) ? intval($settings['sales_limit']) : 50;
 
         // Fetch recent orders from LemonSqueezy API
@@ -410,7 +453,7 @@ class LemonSqueezy_API_WordPress {
 
         // Parse orders (just gets raw items)
         $orders = $this->parse_lemonsqueezy_orders($data);
-        
+
         // Log first order completely raw
         if (!empty($orders)) {
             $this->log_activity('RAW ORDER FROM API', array(
@@ -427,13 +470,14 @@ class LemonSqueezy_API_WordPress {
 
             foreach (array_slice($orders, 0, $sales_limit) as $sale) {
                 $sale_id = isset($sale['id']) ? $sale['id'] : '';
-                $email = isset($sale['email']) ? sanitize_email($sale['email']) : '';
-                
-                // Handle refunds
+
+                // Extract attributes from JSON:API structure
+                $attrs = isset($sale['attributes']) ? $sale['attributes'] : array();
+                $email = isset($attrs['user_email']) ? sanitize_email($attrs['user_email']) : '';
+
+                // Handle refunds - check the 'refunded' boolean in attributes
                 if (isset($settings['handle_refunds']) && $settings['handle_refunds']) {
-                    if ((isset($sale['refunded']) && $sale['refunded']) || 
-                        (isset($sale['chargedback']) && $sale['chargedback']) || 
-                        (isset($sale['partially_refunded']) && $sale['partially_refunded'])) {
+                    if (isset($attrs['refunded']) && $attrs['refunded'] === true) {
                         $refund_result = $this->handle_refund($sale);
                         if (!is_wp_error($refund_result)) {
                             $refunds_processed++;
@@ -441,21 +485,46 @@ class LemonSqueezy_API_WordPress {
                         continue;
                     }
                 }
-                
-                // Handle subscription status changes
+
+                // Handle subscription status changes - fetch actual subscription data
                 if (isset($settings['handle_subscriptions']) && $settings['handle_subscriptions']) {
-                    if (isset($sale['subscription_id']) && !empty($sale['subscription_id'])) {
-                        if ((isset($sale['cancelled']) && $sale['cancelled']) || 
-                            (isset($sale['ended']) && $sale['ended'])) {
-                            $sub_result = $this->handle_subscription_change($sale);
-                            if (!is_wp_error($sub_result)) {
-                                $subscriptions_updated++;
+                    // Extract subscription ID from relationships
+                    $subscription_id = $this->extract_subscription_id($sale);
+
+                    if (!empty($subscription_id)) {
+                        // Fetch the actual subscription to check its status
+                        $subscription = $this->fetch_subscription($access_token, $subscription_id);
+
+                        if ($subscription && !is_wp_error($subscription)) {
+                            $sub_attrs = isset($subscription['attributes']) ? $subscription['attributes'] : array();
+                            $sub_status = isset($sub_attrs['status']) ? $sub_attrs['status'] : '';
+
+                            // Check for subscription states that require action
+                            // expired = subscription truly ended
+                            // cancelled = in grace period but will end at ends_at
+                            // unpaid = payment failed after all retries
+                            if (in_array($sub_status, array('expired', 'unpaid'))) {
+                                $sub_result = $this->handle_subscription_change($sale, $subscription);
+                                if (!is_wp_error($sub_result)) {
+                                    $subscriptions_updated++;
+                                }
+                                continue;
+                            } else if ($sub_status === 'cancelled') {
+                                // Cancelled but check if grace period has ended
+                                $ends_at = isset($sub_attrs['ends_at']) ? $sub_attrs['ends_at'] : '';
+                                if (!empty($ends_at) && strtotime($ends_at) <= time()) {
+                                    // Grace period ended, treat as expired
+                                    $sub_result = $this->handle_subscription_change($sale, $subscription);
+                                    if (!is_wp_error($sub_result)) {
+                                        $subscriptions_updated++;
+                                    }
+                                    continue;
+                                }
                             }
-                            continue;
                         }
                     }
                 }
-                
+
                 // Check if sale was processed AND user still exists
                 $should_process = true;
                 if (in_array($sale_id, $processed_sales)) {
@@ -476,22 +545,22 @@ class LemonSqueezy_API_WordPress {
                         }
                     }
                 }
-                
+
                 if ($should_process) {
                     $result = $this->process_sale($sale);
-                    
+
                     if (!is_wp_error($result)) {
                         $processed_sales[] = $sale_id;
                         $new_sales_count++;
                     }
                 }
             }
-            
+
             // Keep only last 1000 processed sale IDs to prevent array from growing too large
             if (count($processed_sales) > 1000) {
                 $processed_sales = array_slice($processed_sales, -1000);
             }
-            
+
             update_option('lemonsqueezy_processed_sales', $processed_sales);
 
             $this->log_activity('Cron completed', array(
@@ -501,6 +570,115 @@ class LemonSqueezy_API_WordPress {
                 'subscriptions_updated' => $subscriptions_updated
             ));
         }
+
+        // Also check existing users' subscriptions for status changes
+        if (isset($settings['handle_subscriptions']) && $settings['handle_subscriptions']) {
+            $subscriptions_checked = $this->check_existing_subscriptions($access_token);
+            if ($subscriptions_checked > 0) {
+                $this->log_activity('Existing subscriptions checked', array(
+                    'total_checked' => $subscriptions_checked
+                ));
+            }
+        }
+    }
+
+    /**
+     * Check existing users' subscriptions for status changes
+     * This catches subscription changes that may not appear in recent orders
+     */
+    private function check_existing_subscriptions($access_token) {
+        if (empty($access_token)) {
+            return 0;
+        }
+
+        $settings = get_option($this->option_name);
+
+        // Get users with LemonSqueezy subscriptions who are still active (not marked as expired/unpaid)
+        $args = array(
+            'meta_query' => array(
+                'relation' => 'AND',
+                array(
+                    'key' => 'lemonsqueezy_sale_data',
+                    'compare' => 'EXISTS'
+                ),
+                array(
+                    'relation' => 'OR',
+                    array(
+                        'key' => 'lemonsqueezy_subscription_status',
+                        'compare' => 'NOT EXISTS'
+                    ),
+                    array(
+                        'key' => 'lemonsqueezy_subscription_status',
+                        'value' => array('expired', 'unpaid'),
+                        'compare' => 'NOT IN'
+                    )
+                )
+            ),
+            'number' => 50, // Check 50 users per cron run to avoid timeouts
+            'fields' => 'all'
+        );
+
+        $user_query = new WP_User_Query($args);
+        $users = $user_query->get_results();
+        $checked_count = 0;
+
+        foreach ($users as $user) {
+            // Get stored sale data
+            $sale_data_json = get_user_meta($user->ID, 'lemonsqueezy_sale_data', true);
+            if (empty($sale_data_json)) {
+                continue;
+            }
+
+            $sale_data = json_decode($sale_data_json, true);
+            if (!$sale_data) {
+                continue;
+            }
+
+            // Extract subscription ID
+            $subscription_id = $this->extract_subscription_id($sale_data);
+            if (empty($subscription_id)) {
+                continue; // Not a subscription purchase
+            }
+
+            // Fetch current subscription status
+            $subscription = $this->fetch_subscription($access_token, $subscription_id);
+            if (!$subscription || is_wp_error($subscription)) {
+                continue;
+            }
+
+            $sub_attrs = isset($subscription['attributes']) ? $subscription['attributes'] : array();
+            $sub_status = isset($sub_attrs['status']) ? $sub_attrs['status'] : '';
+            $ends_at = isset($sub_attrs['ends_at']) ? $sub_attrs['ends_at'] : '';
+
+            $checked_count++;
+
+            // Check if subscription needs action
+            if (in_array($sub_status, array('expired', 'unpaid'))) {
+                // Subscription has ended, remove roles
+                $result = $this->handle_subscription_change($sale_data, $subscription);
+                if (!is_wp_error($result)) {
+                    $this->log_activity('Subscription auto-detected as ended', array(
+                        'user_id' => $user->ID,
+                        'email' => $user->user_email,
+                        'subscription_id' => $subscription_id,
+                        'status' => $sub_status
+                    ));
+                }
+            } else if ($sub_status === 'cancelled' && !empty($ends_at) && strtotime($ends_at) <= time()) {
+                // Cancelled subscription, grace period ended
+                $result = $this->handle_subscription_change($sale_data, $subscription);
+                if (!is_wp_error($result)) {
+                    $this->log_activity('Cancelled subscription grace period ended', array(
+                        'user_id' => $user->ID,
+                        'email' => $user->user_email,
+                        'subscription_id' => $subscription_id,
+                        'ends_at' => $ends_at
+                    ));
+                }
+            }
+        }
+
+        return $checked_count;
     }
     
     /**
@@ -848,14 +1026,19 @@ class LemonSqueezy_API_WordPress {
      */
     private function handle_refund($sale_data) {
         $settings = get_option($this->option_name);
-        $email = isset($sale_data['email']) ? sanitize_email($sale_data['email']) : '';
+
+        // Extract from attributes (JSON:API structure)
+        $attrs = isset($sale_data['attributes']) ? $sale_data['attributes'] : array();
         $sale_id = isset($sale_data['id']) ? $sale_data['id'] : '';
-        $product_name = isset($sale_data['product_name']) ? sanitize_text_field($sale_data['product_name']) : '';
-        
+
+        $email = isset($attrs['user_email']) ? sanitize_email($attrs['user_email']) : '';
+        $product_name = isset($attrs['first_order_item']['product_name']) ? sanitize_text_field($attrs['first_order_item']['product_name']) : '';
+        $refunded_at = isset($attrs['refunded_at']) ? $attrs['refunded_at'] : '';
+
         if (empty($email)) {
             return new WP_Error('invalid_email', 'Email address is required');
         }
-        
+
         $user = get_user_by('email', $email);
         if (!$user) {
             $this->log_activity('Refund processing skipped', array(
@@ -865,100 +1048,134 @@ class LemonSqueezy_API_WordPress {
             ));
             return new WP_Error('user_not_found', 'User not found');
         }
-        
+
         $refund_action = isset($settings['refund_action']) ? $settings['refund_action'] : 'remove_roles';
-        
+
         if ($refund_action === 'delete_account') {
             require_once(ABSPATH.'wp-admin/includes/user.php');
             wp_delete_user($user->ID);
-            
+
             $this->log_activity('User deleted due to refund', array(
                 'user_id' => $user->ID,
                 'email' => $email,
                 'sale_id' => $sale_id,
-                'product' => $product_name
+                'product' => $product_name,
+                'refunded_at' => $refunded_at
             ));
         } else {
             // Remove roles assigned by LemonSqueezy
             $assigned_roles = get_user_meta($user->ID, 'lemonsqueezy_assigned_roles', true);
+            $roles_removed = array();
             if ($assigned_roles) {
                 $roles = json_decode($assigned_roles, true);
                 if (is_array($roles)) {
                     foreach ($roles as $role) {
                         $user->remove_role($role);
+                        $roles_removed[] = $role;
                     }
                 }
             }
-            
+
             update_user_meta($user->ID, 'lemonsqueezy_refunded', 'yes');
             update_user_meta($user->ID, 'lemonsqueezy_refunded_date', current_time('mysql'));
-            
+
             $this->log_activity('User roles removed due to refund', array(
                 'user_id' => $user->ID,
                 'email' => $email,
                 'sale_id' => $sale_id,
                 'product' => $product_name,
-                'roles_removed' => $roles
+                'refunded_at' => $refunded_at,
+                'roles_removed' => $roles_removed
             ));
         }
-        
+
         return $user->ID;
     }
     
     /**
-     * Handle subscription change (cancellation/end)
+     * Handle subscription change (cancellation/end/expiration)
+     *
+     * @param array $order_data The order data from LemonSqueezy API
+     * @param array $subscription_data The subscription data from LemonSqueezy API
      */
-    private function handle_subscription_change($sale_data) {
+    private function handle_subscription_change($order_data, $subscription_data) {
         $settings = get_option($this->option_name);
-        $email = isset($sale_data['email']) ? sanitize_email($sale_data['email']) : '';
-        $subscription_id = isset($sale_data['subscription_id']) ? $sale_data['subscription_id'] : '';
-        $product_name = isset($sale_data['product_name']) ? sanitize_text_field($sale_data['product_name']) : '';
-        
+
+        // Extract from order attributes (JSON:API structure)
+        $order_attrs = isset($order_data['attributes']) ? $order_data['attributes'] : array();
+        $email = isset($order_attrs['user_email']) ? sanitize_email($order_attrs['user_email']) : '';
+        $product_name = isset($order_attrs['first_order_item']['product_name']) ? sanitize_text_field($order_attrs['first_order_item']['product_name']) : '';
+
+        // Extract from subscription attributes
+        $sub_attrs = isset($subscription_data['attributes']) ? $subscription_data['attributes'] : array();
+        $subscription_id = isset($subscription_data['id']) ? $subscription_data['id'] : '';
+        $sub_status = isset($sub_attrs['status']) ? $sub_attrs['status'] : '';
+        $ends_at = isset($sub_attrs['ends_at']) ? $sub_attrs['ends_at'] : '';
+        $cancelled = isset($sub_attrs['cancelled']) ? $sub_attrs['cancelled'] : false;
+
         if (empty($email)) {
             return new WP_Error('invalid_email', 'Email address is required');
         }
-        
+
         $user = get_user_by('email', $email);
         if (!$user) {
+            $this->log_activity('Subscription change processing skipped', array(
+                'reason' => 'User not found',
+                'email' => $email,
+                'subscription_id' => $subscription_id,
+                'subscription_status' => $sub_status
+            ));
             return new WP_Error('user_not_found', 'User not found');
         }
-        
+
         $action = isset($settings['subscription_cancellation_action']) ? $settings['subscription_cancellation_action'] : 'remove_roles';
-        
+
         if ($action === 'delete_account') {
             require_once(ABSPATH.'wp-admin/includes/user.php');
             wp_delete_user($user->ID);
-            
+
             $this->log_activity('User deleted due to subscription end', array(
                 'user_id' => $user->ID,
                 'email' => $email,
                 'subscription_id' => $subscription_id,
-                'product' => $product_name
+                'subscription_status' => $sub_status,
+                'product' => $product_name,
+                'ends_at' => $ends_at
             ));
         } else {
             // Remove roles assigned by LemonSqueezy
             $assigned_roles = get_user_meta($user->ID, 'lemonsqueezy_assigned_roles', true);
+            $roles_removed = array();
             if ($assigned_roles) {
                 $roles = json_decode($assigned_roles, true);
                 if (is_array($roles)) {
                     foreach ($roles as $role) {
                         $user->remove_role($role);
+                        $roles_removed[] = $role;
                     }
                 }
             }
-            
-            update_user_meta($user->ID, 'lemonsqueezy_subscription_status', 'cancelled');
+
+            // Update subscription status in user meta
+            update_user_meta($user->ID, 'lemonsqueezy_subscription_status', $sub_status);
             update_user_meta($user->ID, 'lemonsqueezy_subscription_ended_date', current_time('mysql'));
-            
-            $this->log_activity('Subscription cancelled/ended', array(
+            if (!empty($ends_at)) {
+                update_user_meta($user->ID, 'lemonsqueezy_subscription_ends_at', $ends_at);
+            }
+
+            $this->log_activity('Subscription ended - roles removed', array(
                 'user_id' => $user->ID,
                 'email' => $email,
                 'subscription_id' => $subscription_id,
+                'subscription_status' => $sub_status,
                 'product' => $product_name,
-                'action' => $action
+                'action' => $action,
+                'roles_removed' => $roles_removed,
+                'ends_at' => $ends_at,
+                'cancelled' => $cancelled
             ));
         }
-        
+
         return $user->ID;
     }
     
