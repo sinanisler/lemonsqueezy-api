@@ -1,4 +1,4 @@
-<?php     
+<?php      
 /** 
  * Plugin Name: LemonSqueezy API WordPress
  * Plugin URI: https://github.com/sinanisler/lemonsqueezy-api
