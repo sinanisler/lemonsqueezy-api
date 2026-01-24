@@ -23,3 +23,6 @@ Connect your WordPress site with LemonSqueezy API to automatically create user a
 - ✅ Subscription renewal redirect functionality
   
  
+<img width="1900" height="924" alt="image" src="https://github.com/user-attachments/assets/3fccb35c-f3a4-4116-b931-c633662b8909" />
+<img width="1884" height="947" alt="image" src="https://github.com/user-attachments/assets/97c1fba6-546b-4319-a75e-061dbc9566f0" />
+
