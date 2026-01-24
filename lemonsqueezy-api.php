@@ -3,7 +3,7 @@
  * Plugin Name: LemonSqueezy API WordPress
  * Plugin URI: https://github.com/sinanisler/lemonsqueezy-api
  * Description: Connect your WordPress site with LemonSqueezy API to automatically create user accounts when customers make a purchase. Uses scheduled API polling to monitor sales.
- * Version: 0.2
+ * Version: 0.3
  * Author: sinanisler
  * Author URI: https://github.com/sinanisler
  * License: GPL v2 or later
