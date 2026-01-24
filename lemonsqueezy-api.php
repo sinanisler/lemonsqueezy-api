@@ -313,12 +313,54 @@ class LemonSqueezy_API_WordPress {
     }
 
     /**
-     * Extract subscription ID from relationships
+     * Extract subscription ID from order relationships
+     * Fetches subscriptions from the relationship link
      */
-    private function extract_subscription_id($item) {
-        if (isset($item['relationships']['subscription']['data']['id'])) {
-            return $item['relationships']['subscription']['data']['id'];
+    private function extract_subscription_id($order_item, $access_token = '') {
+        // Method 1: Try direct data field (some API responses include this)
+        if (isset($order_item['relationships']['subscription']['data']['id'])) {
+            return $order_item['relationships']['subscription']['data']['id'];
         }
+
+        // Method 2: Fetch from subscriptions relationship link
+        if (isset($order_item['relationships']['subscriptions']['links']['related']) && !empty($access_token)) {
+            $subscriptions_url = $order_item['relationships']['subscriptions']['links']['related'];
+
+            $this->log_activity('FETCHING SUBSCRIPTIONS FROM RELATIONSHIP', array(
+                'url' => $subscriptions_url,
+                'order_id' => isset($order_item['id']) ? $order_item['id'] : 'unknown'
+            ));
+
+            $response = wp_remote_get($subscriptions_url, array(
+                'headers' => $this->get_api_headers($access_token)
+            ));
+
+            if (is_wp_error($response)) {
+                $this->log_activity('Subscription relationship fetch error', array(
+                    'url' => $subscriptions_url,
+                    'error' => $response->get_error_message()
+                ));
+                return '';
+            }
+
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+
+            // Log raw response for debugging
+            $this->log_activity('RAW SUBSCRIPTIONS RELATIONSHIP RESPONSE', array(
+                'url' => $subscriptions_url,
+                'raw_response' => $data
+            ));
+
+            // Extract first subscription ID from the response
+            if (isset($data['data']) && is_array($data['data']) && !empty($data['data'])) {
+                $first_subscription = $data['data'][0];
+                if (isset($first_subscription['id'])) {
+                    return $first_subscription['id'];
+                }
+            }
+        }
+
         return '';
     }
 
@@ -330,13 +372,21 @@ class LemonSqueezy_API_WordPress {
             return new WP_Error('invalid_params', 'Access token and subscription ID are required');
         }
 
-        $response = wp_remote_get("https://api.lemonsqueezy.com/v1/subscriptions/{$subscription_id}", array(
+        $url = "https://api.lemonsqueezy.com/v1/subscriptions/{$subscription_id}";
+
+        $this->log_activity('FETCHING SUBSCRIPTION', array(
+            'url' => $url,
+            'subscription_id' => $subscription_id
+        ));
+
+        $response = wp_remote_get($url, array(
             'headers' => $this->get_api_headers($access_token)
         ));
 
         if (is_wp_error($response)) {
             $this->log_activity('Subscription fetch error', array(
                 'subscription_id' => $subscription_id,
+                'url' => $url,
                 'error' => $response->get_error_message()
             ));
             return $response;
@@ -344,6 +394,13 @@ class LemonSqueezy_API_WordPress {
 
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
+
+        // Log raw subscription data for debugging
+        $this->log_activity('RAW SUBSCRIPTION RESPONSE', array(
+            'subscription_id' => $subscription_id,
+            'url' => $url,
+            'raw_response' => $data
+        ));
 
         if (!isset($data['data'])) {
             $error_msg = $this->get_api_error_message($data);
@@ -354,13 +411,6 @@ class LemonSqueezy_API_WordPress {
             ));
             return new WP_Error('api_error', $error_msg);
         }
-
-        // Log raw subscription data for debugging
-        $this->log_activity('Subscription fetched', array(
-            'subscription_id' => $subscription_id,
-            'status' => isset($data['data']['attributes']['status']) ? $data['data']['attributes']['status'] : 'unknown',
-            'raw_data' => $data['data']
-        ));
 
         return $data['data'];
     }
@@ -432,22 +482,43 @@ class LemonSqueezy_API_WordPress {
         $sales_limit = isset($settings['sales_limit']) ? intval($settings['sales_limit']) : 50;
 
         // Fetch recent orders from LemonSqueezy API
-        $response = wp_remote_get('https://api.lemonsqueezy.com/v1/orders', array(
+        $orders_url = 'https://api.lemonsqueezy.com/v1/orders';
+
+        $this->log_activity('FETCHING ORDERS', array(
+            'url' => $orders_url,
+            'sales_limit' => $sales_limit
+        ));
+
+        $response = wp_remote_get($orders_url, array(
             'headers' => $this->get_api_headers($access_token)
         ));
 
         if (is_wp_error($response)) {
-            $this->log_activity('Cron API error', array('error' => $response->get_error_message()));
+            $this->log_activity('Orders fetch error', array(
+                'url' => $orders_url,
+                'error' => $response->get_error_message()
+            ));
             return;
         }
 
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
 
+        // Log raw orders response for debugging
+        $this->log_activity('RAW ORDERS RESPONSE', array(
+            'url' => $orders_url,
+            'total_orders' => isset($data['data']) ? count($data['data']) : 0,
+            'raw_response' => $data
+        ));
+
         // Check for JSON:API structure
         if (!isset($data['data'])) {
             $error_msg = $this->get_api_error_message($data);
-            $this->log_activity('Cron API error', array('error' => $error_msg, 'response' => $data));
+            $this->log_activity('Orders API error', array(
+                'url' => $orders_url,
+                'error' => $error_msg,
+                'response' => $data
+            ));
             return;
         }
 
@@ -488,8 +559,8 @@ class LemonSqueezy_API_WordPress {
 
                 // Handle subscription status changes - fetch actual subscription data
                 if (isset($settings['handle_subscriptions']) && $settings['handle_subscriptions']) {
-                    // Extract subscription ID from relationships
-                    $subscription_id = $this->extract_subscription_id($sale);
+                    // Extract subscription ID from relationships (pass access_token to fetch from links)
+                    $subscription_id = $this->extract_subscription_id($sale, $access_token);
 
                     if (!empty($subscription_id)) {
                         // Fetch the actual subscription to check its status
@@ -531,14 +602,27 @@ class LemonSqueezy_API_WordPress {
                     // Sale was processed before, but check if user still exists
                     if (!empty($email)) {
                         $user = get_user_by('email', $email);
-                        if ($user && get_user_meta($user->ID, 'lemonsqueezy_sale_id', true) === $sale_id) {
-                            // User exists and matches this sale, skip processing
-                            $should_process = false;
+                        if ($user) {
+                            $stored_sale_id = get_user_meta($user->ID, 'lemonsqueezy_sale_id', true);
+                            if ($stored_sale_id === $sale_id) {
+                                // User exists and matches this sale, skip processing
+                                $should_process = false;
+                            } else {
+                                // User exists but doesn't match this sale ID - they may have multiple purchases
+                                $processed_sales = array_diff($processed_sales, array($sale_id));
+                                $this->log_activity('Sale re-processed', array(
+                                    'reason' => 'User exists but sale_id mismatch (may have multiple purchases)',
+                                    'sale_id' => $sale_id,
+                                    'stored_sale_id' => $stored_sale_id,
+                                    'email' => $email,
+                                    'user_id' => $user->ID
+                                ));
+                            }
                         } else {
-                            // User was deleted or doesn't match, remove from processed and re-process
+                            // User was actually deleted
                             $processed_sales = array_diff($processed_sales, array($sale_id));
                             $this->log_activity('Sale re-processed', array(
-                                'reason' => 'User no longer exists',
+                                'reason' => 'User was deleted from WordPress',
                                 'sale_id' => $sale_id,
                                 'email' => $email
                             ));
@@ -634,8 +718,8 @@ class LemonSqueezy_API_WordPress {
                 continue;
             }
 
-            // Extract subscription ID
-            $subscription_id = $this->extract_subscription_id($sale_data);
+            // Extract subscription ID (pass access_token to fetch from links if needed)
+            $subscription_id = $this->extract_subscription_id($sale_data, $access_token);
             if (empty($subscription_id)) {
                 continue; // Not a subscription purchase
             }
