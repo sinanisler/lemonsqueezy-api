@@ -133,6 +133,8 @@ class LemonSqueezy_API_WordPress {
      * Plugin activation
      */
     public function activate() {
+        global $wpdb;
+        
         // Set default options
         $default_options = array(
             'access_token' => '',
@@ -176,8 +178,53 @@ class LemonSqueezy_API_WordPress {
             }
         }
 
+        // Add database indexes for frequently queried meta keys
+        $this->add_meta_key_indexes();
+
         // Schedule cron
         $this->schedule_cron();
+    }
+    
+    /**
+     * Add database indexes for frequently queried meta keys
+     */
+    private function add_meta_key_indexes() {
+        global $wpdb;
+        
+        // List of meta keys that are frequently queried
+        $meta_keys = array(
+            'lemonsqueezy_sale_id',
+            'lemonsqueezy_product_name',
+            'lemonsqueezy_created_date',
+            'lemonsqueezy_email_sent',
+            'lemonsqueezy_subscription_status',
+            'lemonsqueezy_sale_data'
+        );
+        
+        // Check if indexes already exist and create them if needed
+        foreach ($meta_keys as $meta_key) {
+            $index_name = 'ls_' . md5($meta_key);
+            
+            // Check if index exists
+            $index_exists = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(1) 
+                 FROM INFORMATION_SCHEMA.STATISTICS 
+                 WHERE table_schema = DATABASE() 
+                 AND table_name = %s 
+                 AND index_name = %s",
+                $wpdb->usermeta,
+                $index_name
+            ));
+            
+            // Create index if it doesn't exist
+            if (!$index_exists) {
+                // Direct query since index names can't be prepared
+                $wpdb->query(
+                    "ALTER TABLE {$wpdb->usermeta} 
+                     ADD INDEX {$index_name} (meta_key(191), meta_value(100))"
+                );
+            }
+        }
     }
     
     /**
@@ -699,16 +746,16 @@ class LemonSqueezy_API_WordPress {
                 )
             ),
             'number' => 50, // Check 50 users per cron run to avoid timeouts
-            'fields' => 'all'
+            'fields' => 'ids' // Only fetch user IDs for better performance
         );
 
         $user_query = new WP_User_Query($args);
-        $users = $user_query->get_results();
+        $user_ids = $user_query->get_results();
         $checked_count = 0;
 
-        foreach ($users as $user) {
+        foreach ($user_ids as $user_id) {
             // Get stored sale data
-            $sale_data_json = get_user_meta($user->ID, 'lemonsqueezy_sale_data', true);
+            $sale_data_json = get_user_meta($user_id, 'lemonsqueezy_sale_data', true);
             if (empty($sale_data_json)) {
                 continue;
             }
@@ -741,9 +788,10 @@ class LemonSqueezy_API_WordPress {
                 // Subscription has ended, remove roles
                 $result = $this->handle_subscription_change($sale_data, $subscription);
                 if (!is_wp_error($result)) {
+                    $user = get_userdata($user_id);
                     $this->log_activity('Subscription auto-detected as ended', array(
-                        'user_id' => $user->ID,
-                        'email' => $user->user_email,
+                        'user_id' => $user_id,
+                        'email' => $user ? $user->user_email : 'unknown',
                         'subscription_id' => $subscription_id,
                         'status' => $sub_status
                     ));
@@ -1410,68 +1458,79 @@ class LemonSqueezy_API_WordPress {
             'product_breakdown' => array()
         );
         
-        // Total users with LemonSqueezy metadata
-        $user_query = new WP_User_Query(array(
-            'meta_key' => 'lemonsqueezy_sale_id',
-            'meta_compare' => 'EXISTS',
-            'fields' => 'all'
-        ));
-        $all_users = $user_query->get_results();
-        $stats['total_users'] = count($all_users);
+        // Total users with LemonSqueezy metadata - using SQL count
+        $total_users_query = $wpdb->prepare(
+            "SELECT COUNT(DISTINCT um.user_id) 
+             FROM {$wpdb->usermeta} um 
+             WHERE um.meta_key = %s",
+            'lemonsqueezy_sale_id'
+        );
+        $stats['total_users'] = (int) $wpdb->get_var($total_users_query);
         
-        // Users created this month
+        // Users created this month - using SQL count
         $month_start = date('Y-m-01 00:00:00');
-        $users_this_month = 0;
+        $users_this_month_query = $wpdb->prepare(
+            "SELECT COUNT(DISTINCT um.user_id) 
+             FROM {$wpdb->usermeta} um 
+             WHERE um.meta_key = %s 
+             AND um.meta_value >= %s",
+            'lemonsqueezy_created_date',
+            $month_start
+        );
+        $stats['users_this_month'] = (int) $wpdb->get_var($users_this_month_query);
+        
+        // Emails sent - using SQL count
+        $emails_sent_query = $wpdb->prepare(
+            "SELECT COUNT(DISTINCT um.user_id) 
+             FROM {$wpdb->usermeta} um 
+             WHERE um.meta_key = %s 
+             AND um.meta_value = %s",
+            'lemonsqueezy_email_sent',
+            'yes'
+        );
+        $stats['emails_sent'] = (int) $wpdb->get_var($emails_sent_query);
+        $stats['email_success_rate'] = $stats['total_users'] > 0 ? round(($stats['emails_sent'] / $stats['total_users']) * 100) : 0;
+        
+        // Product breakdown - using SQL group count
+        $product_breakdown_query = $wpdb->prepare(
+            "SELECT um.meta_value as product_name, COUNT(*) as count 
+             FROM {$wpdb->usermeta} um 
+             WHERE um.meta_key = %s 
+             AND um.meta_value != '' 
+             GROUP BY um.meta_value 
+             ORDER BY count DESC 
+             LIMIT 10",
+            'lemonsqueezy_product_name'
+        );
+        $product_results = $wpdb->get_results($product_breakdown_query);
         $product_counts = array();
-        $emails_sent_count = 0;
-        $active_subs = 0;
         
-        foreach ($all_users as $user) {
-            $created_date = get_user_meta($user->ID, 'lemonsqueezy_created_date', true);
-            if ($created_date && $created_date >= $month_start) {
-                $users_this_month++;
+        if (!empty($product_results)) {
+            foreach ($product_results as $row) {
+                $product_counts[$row->product_name] = (int) $row->count;
             }
-            
-            // Count emails sent
-            if (get_user_meta($user->ID, 'lemonsqueezy_email_sent', true) === 'yes') {
-                $emails_sent_count++;
-            }
-            
-            // Product breakdown
-            $product = get_user_meta($user->ID, 'lemonsqueezy_product_name', true);
-            if ($product) {
-                if (!isset($product_counts[$product])) {
-                    $product_counts[$product] = 0;
-                }
-                $product_counts[$product]++;
-            }
-            
-            // Active subscriptions
-            $sub_status = get_user_meta($user->ID, 'lemonsqueezy_subscription_status', true);
-            if (empty($sub_status) || $sub_status !== 'cancelled') {
-                $sale_data = get_user_meta($user->ID, 'lemonsqueezy_sale_data', true);
-                if ($sale_data) {
-                    $sale_obj = json_decode($sale_data, true);
-                    if (isset($sale_obj['subscription_id']) && !empty($sale_obj['subscription_id'])) {
-                        $active_subs++;
-                    }
-                }
-            }
+            $stats['product_breakdown'] = $product_counts;
+            $stats['top_product_name'] = $product_results[0]->product_name;
+            $stats['top_product_count'] = (int) $product_results[0]->count;
         }
         
-        $stats['users_this_month'] = $users_this_month;
-        $stats['emails_sent'] = $emails_sent_count;
-        $stats['email_success_rate'] = $stats['total_users'] > 0 ? round(($emails_sent_count / $stats['total_users']) * 100) : 0;
-        $stats['active_subscriptions'] = $active_subs;
-        
-        // Most popular product
-        if (!empty($product_counts)) {
-            arsort($product_counts);
-            $stats['product_breakdown'] = array_slice($product_counts, 0, 10);
-            $top_product = array_key_first($product_counts);
-            $stats['top_product_name'] = $top_product;
-            $stats['top_product_count'] = $product_counts[$top_product];
-        }
+        // Active subscriptions - using SQL query
+        // Count users with subscription_id in sale_data and status not 'cancelled'
+        $active_subs_query = $wpdb->prepare(
+            "SELECT COUNT(DISTINCT um1.user_id) 
+             FROM {$wpdb->usermeta} um1 
+             WHERE um1.meta_key = %s 
+             AND um1.meta_value LIKE %s
+             AND um1.user_id NOT IN (
+                 SELECT user_id FROM {$wpdb->usermeta} 
+                 WHERE meta_key = %s AND meta_value = %s
+             )",
+            'lemonsqueezy_sale_data',
+            '%subscription_id%',
+            'lemonsqueezy_subscription_status',
+            'cancelled'
+        );
+        $stats['active_subscriptions'] = (int) $wpdb->get_var($active_subs_query);
         
         // Count from logs
         $logs = get_option($this->log_option_name, array());
@@ -2307,7 +2366,8 @@ class LemonSqueezy_API_WordPress {
             'number' => $per_page,
             'paged' => $page,
             'orderby' => 'registered',
-            'order' => 'DESC'
+            'order' => 'DESC',
+            'fields' => 'all' // Load full user objects only for display page
         );
         
         // Apply filters
