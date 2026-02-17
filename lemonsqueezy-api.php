@@ -159,66 +159,13 @@ class LemonSqueezy_API_WordPress {
 
         if (!get_option($this->option_name)) {
             add_option($this->option_name, $default_options);
-        } else {
-            // Backward compatibility: migrate old auto_create_users to product-specific settings
-            $existing_settings = get_option($this->option_name);
-            if (isset($existing_settings['auto_create_users']) && $existing_settings['auto_create_users']) {
-                // If global auto_create_users was enabled, enable it for all existing products
-                if (!isset($existing_settings['product_auto_create'])) {
-                    $existing_settings['product_auto_create'] = array();
-                    if (isset($existing_settings['products']) && is_array($existing_settings['products'])) {
-                        foreach ($existing_settings['products'] as $product) {
-                            $existing_settings['product_auto_create'][$product['id']] = true;
-                        }
-                    }
-                }
-                // Remove old setting
-                unset($existing_settings['auto_create_users']);
-                update_option($this->option_name, $existing_settings);
-            }
         }
 
         // Add database indexes for frequently queried meta keys
         $this->add_meta_key_indexes();
 
-        // Migrate old tracking system to new database-based system
-        $this->migrate_old_tracking_system();
-
         // Schedule cron
         $this->schedule_cron();
-    }
-    
-    /**
-     * Migrate old array-based tracking to new database-based system
-     */
-    private function migrate_old_tracking_system() {
-        // Get old processed sales array
-        $old_processed_sales = get_option('lemonsqueezy_processed_sales', array());
-        
-        if (!empty($old_processed_sales) && is_array($old_processed_sales)) {
-            $migrated_count = 0;
-            
-            foreach ($old_processed_sales as $sale_id) {
-                // Check if already migrated
-                $status = get_option('lemonsqueezy_sale_status_' . $sale_id);
-                if ($status === false) {
-                    // Not migrated yet, create new tracking entry
-                    $this->update_sale_processing_status($sale_id, 'completed', 'Migrated from old system');
-                    $migrated_count++;
-                }
-            }
-            
-            if ($migrated_count > 0) {
-                $this->log_activity('Tracking system migration completed', array(
-                    'migrated_sales' => $migrated_count,
-                    'total_old_sales' => count($old_processed_sales)
-                ));
-                
-                // Backup old array and clear it
-                update_option('lemonsqueezy_processed_sales_backup', $old_processed_sales);
-                update_option('lemonsqueezy_processed_sales', array());
-            }
-        }
     }
     
     /**
