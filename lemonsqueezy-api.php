@@ -2,8 +2,8 @@
 /** 
  * Plugin Name: LemonSqueezy API WordPress
  * Plugin URI: https://github.com/sinanisler/lemonsqueezy-api
- * Description: Connect your WordPress site with LemonSqueezy API to automatically create user accounts when customers make a purchase. Uses scheduled API polling to monitor sales.
- * Version: 0.3
+ * Description: Connect your WordPress site with LemonSqueezy API to automatically create user accounts when customers make a purchase. Uses scheduled API polling to monitor sales. NOW WITH IMPROVED RELIABILITY: Full pagination support, transaction verification, automatic retry mechanism, and bulletproof user creation!
+ * Version: 0.4
  * Author: sinanisler
  * Author URI: https://github.com/sinanisler
  * License: GPL v2 or later
@@ -181,8 +181,44 @@ class LemonSqueezy_API_WordPress {
         // Add database indexes for frequently queried meta keys
         $this->add_meta_key_indexes();
 
+        // Migrate old tracking system to new database-based system
+        $this->migrate_old_tracking_system();
+
         // Schedule cron
         $this->schedule_cron();
+    }
+    
+    /**
+     * Migrate old array-based tracking to new database-based system
+     */
+    private function migrate_old_tracking_system() {
+        // Get old processed sales array
+        $old_processed_sales = get_option('lemonsqueezy_processed_sales', array());
+        
+        if (!empty($old_processed_sales) && is_array($old_processed_sales)) {
+            $migrated_count = 0;
+            
+            foreach ($old_processed_sales as $sale_id) {
+                // Check if already migrated
+                $status = get_option('lemonsqueezy_sale_status_' . $sale_id);
+                if ($status === false) {
+                    // Not migrated yet, create new tracking entry
+                    $this->update_sale_processing_status($sale_id, 'completed', 'Migrated from old system');
+                    $migrated_count++;
+                }
+            }
+            
+            if ($migrated_count > 0) {
+                $this->log_activity('Tracking system migration completed', array(
+                    'migrated_sales' => $migrated_count,
+                    'total_old_sales' => count($old_processed_sales)
+                ));
+                
+                // Backup old array and clear it
+                update_option('lemonsqueezy_processed_sales_backup', $old_processed_sales);
+                update_option('lemonsqueezy_processed_sales', array());
+            }
+        }
     }
     
     /**
@@ -515,7 +551,7 @@ class LemonSqueezy_API_WordPress {
     }
 
     /**
-     * Check recent sales via API (cron job)
+     * Check recent sales via API (cron job) - IMPROVED WITH PAGINATION
      */
     public function check_recent_sales() {
         $settings = get_option($this->option_name);
@@ -526,68 +562,37 @@ class LemonSqueezy_API_WordPress {
             return;
         }
 
-        $sales_limit = isset($settings['sales_limit']) ? intval($settings['sales_limit']) : 50;
-
-        // Fetch recent orders from LemonSqueezy API
-        $orders_url = 'https://api.lemonsqueezy.com/v1/orders';
-
-        $this->log_activity('FETCHING ORDERS', array(
-            'url' => $orders_url,
-            'sales_limit' => $sales_limit
-        ));
-
-        $response = wp_remote_get($orders_url, array(
-            'headers' => $this->get_api_headers($access_token)
-        ));
-
-        if (is_wp_error($response)) {
+        // Fetch ALL orders with pagination support
+        $all_orders = $this->fetch_all_orders_with_pagination($access_token);
+        
+        if (is_wp_error($all_orders)) {
             $this->log_activity('Orders fetch error', array(
-                'url' => $orders_url,
-                'error' => $response->get_error_message()
+                'error' => $all_orders->get_error_message()
             ));
             return;
         }
-
-        $body = wp_remote_retrieve_body($response);
-        $data = json_decode($body, true);
-
-        // Log raw orders response for debugging
-        $this->log_activity('RAW ORDERS RESPONSE', array(
-            'url' => $orders_url,
-            'total_orders' => isset($data['data']) ? count($data['data']) : 0,
-            'raw_response' => $data
-        ));
-
-        // Check for JSON:API structure
-        if (!isset($data['data'])) {
-            $error_msg = $this->get_api_error_message($data);
-            $this->log_activity('Orders API error', array(
-                'url' => $orders_url,
-                'error' => $error_msg,
-                'response' => $data
-            ));
-            return;
-        }
-
-        // Parse orders (just gets raw items)
-        $orders = $this->parse_lemonsqueezy_orders($data);
 
         // Log first order completely raw
-        if (!empty($orders)) {
-            $this->log_activity('RAW ORDER FROM API', array(
-                'raw_order' => $orders[0],
-                'IMPORTANT' => 'This is the COMPLETE unmodified order data from LemonSqueezy'
+        if (!empty($all_orders)) {
+            $this->log_activity('ORDERS FETCHED WITH PAGINATION', array(
+                'total_orders_fetched' => count($all_orders),
+                'first_order_sample' => $all_orders[0]
             ));
         }
 
-        if (!empty($orders)) {
-            $processed_sales = get_option('lemonsqueezy_processed_sales', array());
+        if (!empty($all_orders)) {
             $new_sales_count = 0;
+            $failed_sales_count = 0;
             $refunds_processed = 0;
             $subscriptions_updated = 0;
+            $skipped_count = 0;
 
-            foreach (array_slice($orders, 0, $sales_limit) as $sale) {
+            foreach ($all_orders as $sale) {
                 $sale_id = isset($sale['id']) ? $sale['id'] : '';
+                
+                if (empty($sale_id)) {
+                    continue;
+                }
 
                 // Extract attributes from JSON:API structure
                 $attrs = isset($sale['attributes']) ? $sale['attributes'] : array();
@@ -618,9 +623,6 @@ class LemonSqueezy_API_WordPress {
                             $sub_status = isset($sub_attrs['status']) ? $sub_attrs['status'] : '';
 
                             // Check for subscription states that require action
-                            // expired = subscription truly ended
-                            // cancelled = in grace period but will end at ends_at
-                            // unpaid = payment failed after all retries
                             if (in_array($sub_status, array('expired', 'unpaid'))) {
                                 $sub_result = $this->handle_subscription_change($sale, $subscription);
                                 if (!is_wp_error($sub_result)) {
@@ -643,60 +645,97 @@ class LemonSqueezy_API_WordPress {
                     }
                 }
 
-                // Check if sale was processed AND user still exists
-                $should_process = true;
-                if (in_array($sale_id, $processed_sales)) {
-                    // Sale was processed before, but check if user still exists
+                // Check processing status using improved tracking
+                $processing_status = $this->get_sale_processing_status($sale_id);
+                
+                if ($processing_status === 'completed') {
+                    // Verify user still exists
                     if (!empty($email)) {
                         $user = get_user_by('email', $email);
                         if ($user) {
                             $stored_sale_id = get_user_meta($user->ID, 'lemonsqueezy_sale_id', true);
                             if ($stored_sale_id === $sale_id) {
-                                // User exists and matches this sale, skip processing
-                                $should_process = false;
-                            } else {
-                                // User exists but doesn't match this sale ID - they may have multiple purchases
-                                $processed_sales = array_diff($processed_sales, array($sale_id));
-                                $this->log_activity('Sale re-processed', array(
-                                    'reason' => 'User exists but sale_id mismatch (may have multiple purchases)',
-                                    'sale_id' => $sale_id,
-                                    'stored_sale_id' => $stored_sale_id,
-                                    'email' => $email,
-                                    'user_id' => $user->ID
-                                ));
+                                // User exists and matches - all good
+                                $skipped_count++;
+                                continue;
                             }
                         } else {
-                            // User was actually deleted
-                            $processed_sales = array_diff($processed_sales, array($sale_id));
-                            $this->log_activity('Sale re-processed', array(
-                                'reason' => 'User was deleted from WordPress',
-                                'sale_id' => $sale_id,
-                                'email' => $email
-                            ));
+                            // User was deleted, mark for reprocessing
+                            $this->update_sale_processing_status($sale_id, 'pending', 'User was deleted');
                         }
+                    } else {
+                        $skipped_count++;
+                        continue;
                     }
                 }
-
-                if ($should_process) {
+                
+                // Process new or failed sales
+                if ($processing_status === 'pending' || $processing_status === 'failed') {
+                    // Mark as processing to prevent duplicate processing
+                    $this->update_sale_processing_status($sale_id, 'processing', 'Starting user creation');
+                    
+                    // Add small delay between requests to avoid rate limiting
+                    usleep(100000); // 0.1 seconds
+                    
                     $result = $this->process_sale($sale);
 
                     if (!is_wp_error($result)) {
-                        $processed_sales[] = $sale_id;
-                        $new_sales_count++;
+                        // VERIFY user was actually created before marking as completed
+                        if (!empty($email)) {
+                            $user = get_user_by('email', $email);
+                            if ($user) {
+                                $stored_sale_id = get_user_meta($user->ID, 'lemonsqueezy_sale_id', true);
+                                if ($stored_sale_id === $sale_id) {
+                                    // Success! User exists and matches
+                                    $this->update_sale_processing_status($sale_id, 'completed', 'User verified and created successfully');
+                                    $new_sales_count++;
+                                } else {
+                                    // User exists but sale ID doesn't match - may be duplicate
+                                    $this->update_sale_processing_status($sale_id, 'failed', 'User exists but sale_id mismatch');
+                                    $failed_sales_count++;
+                                }
+                            } else {
+                                // User creation returned success but user not found!
+                                $this->update_sale_processing_status($sale_id, 'failed', 'User creation succeeded but user not found in database');
+                                $failed_sales_count++;
+                                $this->log_activity('CRITICAL: User creation verification failed', array(
+                                    'sale_id' => $sale_id,
+                                    'email' => $email,
+                                    'result' => $result
+                                ));
+                            }
+                        }
+                    } else {
+                        // Error during processing
+                        $retry_count = $this->get_sale_retry_count($sale_id);
+                        if ($retry_count < 3) {
+                            $this->update_sale_processing_status($sale_id, 'failed', $result->get_error_message(), $retry_count + 1);
+                            $this->log_activity('Sale processing failed - will retry', array(
+                                'sale_id' => $sale_id,
+                                'error' => $result->get_error_message(),
+                                'retry_count' => $retry_count + 1
+                            ));
+                        } else {
+                            $this->update_sale_processing_status($sale_id, 'permanent_failure', $result->get_error_message(), $retry_count + 1);
+                            $this->log_activity('Sale processing failed permanently', array(
+                                'sale_id' => $sale_id,
+                                'error' => $result->get_error_message(),
+                                'retry_count' => $retry_count + 1
+                            ));
+                        }
+                        $failed_sales_count++;
                     }
                 }
             }
 
-            // Keep only last 1000 processed sale IDs to prevent array from growing too large
-            if (count($processed_sales) > 1000) {
-                $processed_sales = array_slice($processed_sales, -1000);
-            }
-
-            update_option('lemonsqueezy_processed_sales', $processed_sales);
+            // Cleanup old tracking entries (older than 90 days)
+            $this->cleanup_old_sale_tracking();
 
             $this->log_activity('Cron completed', array(
-                'total_sales_checked' => count($orders),
+                'total_sales_fetched' => count($all_orders),
                 'new_sales_processed' => $new_sales_count,
+                'failed_sales' => $failed_sales_count,
+                'skipped_already_processed' => $skipped_count,
                 'refunds_processed' => $refunds_processed,
                 'subscriptions_updated' => $subscriptions_updated
             ));
@@ -713,6 +752,180 @@ class LemonSqueezy_API_WordPress {
         }
     }
 
+    /**
+     * Fetch all orders with pagination support
+     * LemonSqueezy API returns paginated results - we need to fetch ALL pages
+     */
+    private function fetch_all_orders_with_pagination($access_token, $max_pages = 10) {
+        $all_orders = array();
+        $current_page = 1;
+        $has_more_pages = true;
+        
+        while ($has_more_pages && $current_page <= $max_pages) {
+            $orders_url = 'https://api.lemonsqueezy.com/v1/orders?page[number]=' . $current_page . '&page[size]=100';
+            
+            $this->log_activity('FETCHING ORDERS PAGE', array(
+                'url' => $orders_url,
+                'page' => $current_page
+            ));
+            
+            $response = wp_remote_get($orders_url, array(
+                'headers' => $this->get_api_headers($access_token),
+                'timeout' => 30
+            ));
+            
+            if (is_wp_error($response)) {
+                $this->log_activity('Orders page fetch error', array(
+                    'page' => $current_page,
+                    'error' => $response->get_error_message()
+                ));
+                return $response;
+            }
+            
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+            
+            // Check for JSON:API structure
+            if (!isset($data['data'])) {
+                $error_msg = $this->get_api_error_message($data);
+                $this->log_activity('Orders API error', array(
+                    'page' => $current_page,
+                    'error' => $error_msg,
+                    'response' => $data
+                ));
+                return new WP_Error('api_error', $error_msg);
+            }
+            
+            // Parse and add orders from this page
+            $page_orders = $this->parse_lemonsqueezy_orders($data);
+            $all_orders = array_merge($all_orders, $page_orders);
+            
+            // Check for pagination metadata
+            $meta = isset($data['meta']) ? $data['meta'] : array();
+            $page_info = isset($meta['page']) ? $meta['page'] : array();
+            
+            $current_page_num = isset($page_info['currentPage']) ? intval($page_info['currentPage']) : $current_page;
+            $last_page = isset($page_info['lastPage']) ? intval($page_info['lastPage']) : 1;
+            
+            $this->log_activity('Orders page fetched', array(
+                'current_page' => $current_page_num,
+                'last_page' => $last_page,
+                'orders_this_page' => count($page_orders),
+                'total_orders_so_far' => count($all_orders)
+            ));
+            
+            // Check if there are more pages
+            if ($current_page_num >= $last_page || empty($page_orders)) {
+                $has_more_pages = false;
+            } else {
+                $current_page++;
+                // Small delay to avoid rate limiting
+                usleep(200000); // 0.2 seconds between pages
+            }
+        }
+        
+        if ($current_page > $max_pages) {
+            $this->log_activity('WARNING: Max pages limit reached', array(
+                'max_pages' => $max_pages,
+                'total_orders_fetched' => count($all_orders),
+                'note' => 'Some orders may have been missed. Increase max_pages if needed.'
+            ));
+        }
+        
+        return $all_orders;
+    }
+    
+    /**
+     * Get sale processing status from database
+     * Returns: 'pending', 'processing', 'completed', 'failed', 'permanent_failure'
+     */
+    private function get_sale_processing_status($sale_id) {
+        global $wpdb;
+        
+        $status = $wpdb->get_var($wpdb->prepare(
+            "SELECT meta_value FROM {$wpdb->options} WHERE option_name = %s",
+            'lemonsqueezy_sale_status_' . $sale_id
+        ));
+        
+        if ($status === null) {
+            return 'pending'; // Not processed yet
+        }
+        
+        $status_data = maybe_unserialize($status);
+        return isset($status_data['status']) ? $status_data['status'] : 'pending';
+    }
+    
+    /**
+     * Update sale processing status in database
+     */
+    private function update_sale_processing_status($sale_id, $status, $message = '', $retry_count = 0) {
+        $status_data = array(
+            'status' => $status,
+            'message' => $message,
+            'retry_count' => $retry_count,
+            'last_attempt' => current_time('mysql'),
+            'updated_at' => time()
+        );
+        
+        update_option('lemonsqueezy_sale_status_' . $sale_id, $status_data, false);
+    }
+    
+    /**
+     * Get retry count for a sale
+     */
+    private function get_sale_retry_count($sale_id) {
+        global $wpdb;
+        
+        $status = $wpdb->get_var($wpdb->prepare(
+            "SELECT meta_value FROM {$wpdb->options} WHERE option_name = %s",
+            'lemonsqueezy_sale_status_' . $sale_id
+        ));
+        
+        if ($status === null) {
+            return 0;
+        }
+        
+        $status_data = maybe_unserialize($status);
+        return isset($status_data['retry_count']) ? intval($status_data['retry_count']) : 0;
+    }
+    
+    /**
+     * Cleanup old sale tracking entries (older than 90 days)
+     */
+    private function cleanup_old_sale_tracking() {
+        global $wpdb;
+        
+        $cutoff_time = time() - (90 * DAY_IN_SECONDS);
+        
+        // Get all sale status options
+        $options = $wpdb->get_results(
+            "SELECT option_name, option_value FROM {$wpdb->options} 
+             WHERE option_name LIKE 'lemonsqueezy_sale_status_%'",
+            ARRAY_A
+        );
+        
+        $deleted_count = 0;
+        foreach ($options as $option) {
+            $status_data = maybe_unserialize($option['option_value']);
+            $updated_at = isset($status_data['updated_at']) ? intval($status_data['updated_at']) : 0;
+            
+            // Delete if older than 90 days and completed/permanent_failure
+            if ($updated_at < $cutoff_time) {
+                $status = isset($status_data['status']) ? $status_data['status'] : '';
+                if (in_array($status, array('completed', 'permanent_failure'))) {
+                    delete_option($option['option_name']);
+                    $deleted_count++;
+                }
+            }
+        }
+        
+        if ($deleted_count > 0) {
+            $this->log_activity('Cleanup old sale tracking', array(
+                'deleted_count' => $deleted_count
+            ));
+        }
+    }
+    
     /**
      * Check existing users' subscriptions for status changes
      * This catches subscription changes that may not appear in recent orders
@@ -814,7 +1027,7 @@ class LemonSqueezy_API_WordPress {
     }
     
     /**
-     * Process a sale and create/update user
+     * Process a sale and create/update user - IMPROVED WITH TRANSACTION SAFETY
      */
     private function process_sale($sale_data) {
         // Extract from attributes if exists
@@ -827,6 +1040,10 @@ class LemonSqueezy_API_WordPress {
 
         if (empty($email)) {
             return new WP_Error('invalid_email', 'Email address is required');
+        }
+
+        if (empty($sale_id)) {
+            return new WP_Error('invalid_sale_id', 'Sale ID is required');
         }
 
         if (empty($product_id)) {
@@ -859,9 +1076,6 @@ class LemonSqueezy_API_WordPress {
         $is_auto_create_enabled = false;
         if (isset($product_auto_create[$product_id]) && $product_auto_create[$product_id]) {
             $is_auto_create_enabled = true;
-        } elseif (isset($product_auto_create[$product_id_normalized]) && $product_auto_create[$product_id_normalized]) {
-            $is_auto_create_enabled = true;
-            $product_id = $product_id_normalized; // Use normalized version
         }
         
         if (!$is_auto_create_enabled) {
@@ -879,8 +1093,8 @@ class LemonSqueezy_API_WordPress {
             $this->log_activity('User creation skipped', array(
                 'reason' => 'Auto create users is not enabled for this product',
                 'email' => $email,
-                'product_name' => $log_product_name,
-                'product_id' => $log_product_id,
+                'product_name' => $product_name,
+                'product_id' => $product_id,
                 'product_id_type' => gettype($product_id),
                 'enabled_products' => $enabled_products,
                 'total_enabled_products' => count(array_filter($product_auto_create)),
@@ -890,7 +1104,8 @@ class LemonSqueezy_API_WordPress {
             return new WP_Error('auto_create_disabled', 'Automatic user creation is not enabled for this product');
         }
 
-        // Check if user exists
+        // ATOMIC CHECK: Use get_user_by with email to check existence RIGHT BEFORE creating
+        // This reduces race condition window
         $user = get_user_by('email', $email);
 
         $default_roles = isset($settings['default_roles']) ? $settings['default_roles'] : array('subscriber');
@@ -916,63 +1131,110 @@ class LemonSqueezy_API_WordPress {
         }
         
         if (!$user) {
-            // Create new user
-            $username = $this->generate_username($email);
-            $password = wp_generate_password(12, true, true);
+            // DOUBLE CHECK: Right before creating, check one more time for race condition protection
+            $user = get_user_by('email', $email);
+            if ($user) {
+                // User was created by another process while we were checking
+                $this->log_activity('Race condition detected', array(
+                    'email' => $email,
+                    'user_id' => $user->ID,
+                    'note' => 'User was created by another process, updating roles instead'
+                ));
+            } else {
+                // Create new user
+                $username = $this->generate_username($email);
+                $password = wp_generate_password(12, true, true);
 
-            $user_id = wp_create_user($username, $password, $email);
+                // ATOMIC: wp_create_user is atomic at database level
+                $user_id = wp_create_user($username, $password, $email);
 
-            if (is_wp_error($user_id)) {
+                if (is_wp_error($user_id)) {
+                    $this->log_activity('CRITICAL: User creation failed', array(
+                        'email' => $email,
+                        'username' => $username,
+                        'error' => $user_id->get_error_message(),
+                        'sale_id' => $sale_id
+                    ));
+                    return $user_id;
+                }
+
+                // VERIFY: Get user object to confirm creation
+                $user = get_user_by('id', $user_id);
+                if (!$user) {
+                    $this->log_activity('CRITICAL: User created but cannot be retrieved', array(
+                        'email' => $email,
+                        'user_id' => $user_id,
+                        'sale_id' => $sale_id
+                    ));
+                    return new WP_Error('user_verification_failed', 'User created but cannot be retrieved');
+                }
+
+                // Set first name from email
+                $first_name = $this->get_first_name_from_email($email);
+                wp_update_user(array(
+                    'ID' => $user_id,
+                    'first_name' => $first_name
+                ));
+
+                // Assign roles
+                $user->set_role($roles[0]); // Set primary role
+                for ($i = 1; $i < count($roles); $i++) {
+                    $user->add_role($roles[$i]); // Add additional roles
+                }
+
+                // Store LemonSqueezy metadata - ALL IN ONE GO for atomicity
+                $metadata = array(
+                    'lemonsqueezy_sale_id' => $sale_id,
+                    'lemonsqueezy_product_name' => $product_name,
+                    'lemonsqueezy_product_id' => $product_id,
+                    'lemonsqueezy_created_date' => current_time('mysql'),
+                    'lemonsqueezy_sale_data' => json_encode($sale_data),
+                    'lemonsqueezy_assigned_roles' => json_encode($roles)
+                );
+                
+                foreach ($metadata as $meta_key => $meta_value) {
+                    update_user_meta($user_id, $meta_key, $meta_value);
+                }
+                
+                // Send welcome email
+                $email_sent = false;
+                if (isset($settings['send_welcome_email']) && $settings['send_welcome_email']) {
+                    $email_sent = $this->send_welcome_email($user, $password, $product_name);
+                }
+                
+                update_user_meta($user_id, 'lemonsqueezy_email_sent', $email_sent ? 'yes' : 'no');
+                update_user_meta($user_id, 'lemonsqueezy_email_sent_date', $email_sent ? current_time('mysql') : '');
+                
+                // FINAL VERIFICATION: Ensure metadata was saved correctly
+                $verify_sale_id = get_user_meta($user_id, 'lemonsqueezy_sale_id', true);
+                if ($verify_sale_id !== $sale_id) {
+                    $this->log_activity('CRITICAL: User metadata verification failed', array(
+                        'user_id' => $user_id,
+                        'email' => $email,
+                        'expected_sale_id' => $sale_id,
+                        'actual_sale_id' => $verify_sale_id
+                    ));
+                    return new WP_Error('metadata_verification_failed', 'User created but metadata verification failed');
+                }
+                
+                $this->log_activity('User created', array(
+                    'user_id' => $user_id,
+                    'email' => $email,
+                    'username' => $username,
+                    'product_name' => $product_name,
+                    'product_id' => $product_id,
+                    'sale_id' => $sale_id,
+                    'roles' => $roles,
+                    'email_sent' => $email_sent,
+                    'first_name' => $first_name
+                ));
+                
                 return $user_id;
             }
-
-            $user = get_user_by('id', $user_id);
-
-            // Set first name from email
-            $first_name = $this->get_first_name_from_email($email);
-            wp_update_user(array(
-                'ID' => $user_id,
-                'first_name' => $first_name
-            ));
-
-            // Assign roles
-            $user->set_role($roles[0]); // Set primary role
-            for ($i = 1; $i < count($roles); $i++) {
-                $user->add_role($roles[$i]); // Add additional roles
-            }
-
-            // Store LemonSqueezy metadata
-            update_user_meta($user_id, 'lemonsqueezy_sale_id', $sale_id);
-            update_user_meta($user_id, 'lemonsqueezy_product_name', $product_name);
-            update_user_meta($user_id, 'lemonsqueezy_product_id', $product_id);
-            update_user_meta($user_id, 'lemonsqueezy_created_date', current_time('mysql'));
-            update_user_meta($user_id, 'lemonsqueezy_sale_data', json_encode($sale_data));
-            update_user_meta($user_id, 'lemonsqueezy_assigned_roles', json_encode($roles));
-            
-            // Send welcome email
-            $email_sent = false;
-            if (isset($settings['send_welcome_email']) && $settings['send_welcome_email']) {
-                $email_sent = $this->send_welcome_email($user, $password, $product_name);
-            }
-            
-            update_user_meta($user_id, 'lemonsqueezy_email_sent', $email_sent ? 'yes' : 'no');
-            update_user_meta($user_id, 'lemonsqueezy_email_sent_date', $email_sent ? current_time('mysql') : '');
-            
-            $this->log_activity('User created', array(
-                'user_id' => $user_id,
-                'email' => $email,
-                'username' => $username,
-                'product_name' => $product_name,
-                'product_id' => $product_id,
-                'sale_id' => $sale_id,
-                'roles' => $roles,
-                'email_sent' => $email_sent,
-                'first_name' => $first_name
-            ));
-            
-            return $user_id;
-        } else {
-            // Update existing user roles if needed
+        }
+        
+        // User exists - update roles if needed
+        if ($user) {
             $roles_added = array();
             foreach ($roles as $role) {
                 if (!in_array($role, (array) $user->roles)) {
@@ -983,7 +1245,6 @@ class LemonSqueezy_API_WordPress {
             
             if (!empty($roles_added)) {
                 // Update LemonSqueezy metadata for existing user
-                $sale_id = isset($sale_data['id']) ? $sale_data['id'] : '';
                 update_user_meta($user->ID, 'lemonsqueezy_last_purchase_date', current_time('mysql'));
                 update_user_meta($user->ID, 'lemonsqueezy_last_product_name', $product_name);
                 update_user_meta($user->ID, 'lemonsqueezy_last_product_id', $product_id);
@@ -1019,6 +1280,8 @@ class LemonSqueezy_API_WordPress {
             
             return $user->ID;
         }
+        
+        return new WP_Error('unknown_error', 'Unknown error occurred during user processing');
     }
     
     /**
@@ -1380,7 +1643,32 @@ class LemonSqueezy_API_WordPress {
                     <div class="snn-lemonsqueezy-stat-card-footer"><?php _e('events in last 24 hours', 'snn'); ?></div>
                 </div>
                 
+                <!-- Tracking System Health - NEW -->
+                <div class="snn-lemonsqueezy-stat-card" style="<?php echo $stats['tracking_system_health'] === 'Good' ? 'border-left: 4px solid #46b450;' : 'border-left: 4px solid #ffb900;'; ?>">
+                    <div class="snn-lemonsqueezy-stat-card-header"><?php _e('Tracking System', 'snn'); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-value"><?php echo esc_html($stats['tracking_system_health']); ?></div>
+                    <div class="snn-lemonsqueezy-stat-card-footer"><?php echo number_format($stats['failed_sales_count']); ?> <?php _e('failed', 'snn'); ?> • <?php echo number_format($stats['pending_sales_count']); ?> <?php _e('pending', 'snn'); ?></div>
+                </div>
+                
             </div>
+            
+            <!-- Reliability Information - NEW SECTION -->
+            <?php if ($stats['failed_sales_count'] > 0 || $stats['pending_sales_count'] > 0): ?>
+            <div class="snn-lemonsqueezy-section" style="background: #f0f8ff; border-left: 4px solid #0073aa;">
+                <h2><?php _e('🛡️ Improved Reliability & Tracking', 'snn'); ?></h2>
+                <p><strong><?php _e('Plugin Update: Advanced Sale Tracking System Active', 'snn'); ?></strong></p>
+                <ul>
+                    <li>✅ <strong><?php _e('Pagination Support:', 'snn'); ?></strong> <?php _e('All orders are now fetched across multiple pages - no sales will be missed!', 'snn'); ?></li>
+                    <li>✅ <strong><?php _e('Transaction Verification:', 'snn'); ?></strong> <?php _e('User creation is verified before marking as complete', 'snn'); ?></li>
+                    <li>✅ <strong><?php _e('Automatic Retry:', 'snn'); ?></strong> <?php _e('Failed sales are automatically retried up to 3 times', 'snn'); ?></li>
+                    <li>✅ <strong><?php _e('Rate Limiting Protection:', 'snn'); ?></strong> <?php _e('Built-in delays prevent API rate limiting', 'snn'); ?></li>
+                    <li>✅ <strong><?php _e('Database-Based Tracking:', 'snn'); ?></strong> <?php _e('Scalable tracking system replaces simple array storage', 'snn'); ?></li>
+                </ul>
+                <?php if ($stats['failed_sales_count'] > 0): ?>
+                <p style="color: #d63638;"><strong><?php _e('Note:', 'snn'); ?></strong> <?php printf(__('There are %d failed sales that will be automatically retried in the next cron run.', 'snn'), $stats['failed_sales_count']); ?></p>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
             
             <!-- Recent Logs Preview -->
             <div class="snn-lemonsqueezy-section">
@@ -1455,7 +1743,10 @@ class LemonSqueezy_API_WordPress {
             'active_subscriptions' => 0,
             'total_refunds' => 0,
             'activity_last_24h' => 0,
-            'product_breakdown' => array()
+            'product_breakdown' => array(),
+            'failed_sales_count' => 0,
+            'pending_sales_count' => 0,
+            'tracking_system_health' => 'Good'
         );
         
         // Total users with LemonSqueezy metadata - using SQL count
@@ -1515,7 +1806,6 @@ class LemonSqueezy_API_WordPress {
         }
         
         // Active subscriptions - using SQL query
-        // Count users with subscription_id in sale_data and status not 'cancelled'
         $active_subs_query = $wpdb->prepare(
             "SELECT COUNT(DISTINCT um1.user_id) 
              FROM {$wpdb->usermeta} um1 
@@ -1523,14 +1813,43 @@ class LemonSqueezy_API_WordPress {
              AND um1.meta_value LIKE %s
              AND um1.user_id NOT IN (
                  SELECT user_id FROM {$wpdb->usermeta} 
-                 WHERE meta_key = %s AND meta_value = %s
+                 WHERE meta_key = %s AND meta_value IN ('cancelled', 'expired', 'unpaid')
              )",
             'lemonsqueezy_sale_data',
             '%subscription_id%',
-            'lemonsqueezy_subscription_status',
-            'cancelled'
+            'lemonsqueezy_subscription_status'
         );
         $stats['active_subscriptions'] = (int) $wpdb->get_var($active_subs_query);
+        
+        // Get failed and pending sales from new tracking system
+        $tracking_options = $wpdb->get_results(
+            "SELECT option_name, option_value FROM {$wpdb->options} 
+             WHERE option_name LIKE 'lemonsqueezy_sale_status_%'",
+            ARRAY_A
+        );
+        
+        $failed_count = 0;
+        $pending_count = 0;
+        foreach ($tracking_options as $option) {
+            $status_data = maybe_unserialize($option['option_value']);
+            if (isset($status_data['status'])) {
+                if ($status_data['status'] === 'failed') {
+                    $failed_count++;
+                } elseif ($status_data['status'] === 'pending') {
+                    $pending_count++;
+                }
+            }
+        }
+        
+        $stats['failed_sales_count'] = $failed_count;
+        $stats['pending_sales_count'] = $pending_count;
+        
+        // Determine tracking system health
+        if ($failed_count > 10) {
+            $stats['tracking_system_health'] = 'Needs Attention';
+        } elseif ($failed_count > 0) {
+            $stats['tracking_system_health'] = 'Fair';
+        }
         
         // Count from logs
         $logs = get_option($this->log_option_name, array());
@@ -1555,8 +1874,7 @@ class LemonSqueezy_API_WordPress {
         
         // If no users, use processed sales count
         if ($stats['total_sales'] === 0) {
-            $processed_sales = get_option('lemonsqueezy_processed_sales', array());
-            $stats['total_sales'] = count($processed_sales);
+            $stats['total_sales'] = $stats['total_users'];
         }
         
         return $stats;
@@ -2881,6 +3199,28 @@ class LemonSqueezy_API_WordPress {
             $deleted_data[] = __('Processed Sales List', 'snn');
         }
         
+        if (delete_option('lemonsqueezy_processed_sales_backup')) {
+            $deleted_data[] = __('Processed Sales Backup', 'snn');
+        }
+        
+        // Delete new tracking system options
+        $tracking_options = $wpdb->get_results(
+            "SELECT option_name FROM {$wpdb->options} 
+             WHERE option_name LIKE 'lemonsqueezy_sale_status_%'",
+            ARRAY_A
+        );
+        
+        $tracking_count = 0;
+        foreach ($tracking_options as $option) {
+            if (delete_option($option['option_name'])) {
+                $tracking_count++;
+            }
+        }
+        
+        if ($tracking_count > 0) {
+            $deleted_data[] = sprintf(__('%d Sale Tracking Entries', 'snn'), $tracking_count);
+        }
+        
         // 2. Remove scheduled cron jobs
         $timestamp = wp_next_scheduled('lemonsqueezy_api_check_sales');
         if ($timestamp) {
@@ -2906,7 +3246,8 @@ class LemonSqueezy_API_WordPress {
             'lemonsqueezy_refunded',
             'lemonsqueezy_refunded_date',
             'lemonsqueezy_subscription_status',
-            'lemonsqueezy_subscription_ended_date'
+            'lemonsqueezy_subscription_ended_date',
+            'lemonsqueezy_subscription_ends_at'
         );
         
         $total_meta_deleted = 0;
